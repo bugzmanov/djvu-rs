@@ -280,7 +280,7 @@ impl IWDecoder {
                     if self.curband == 0 {
                         step = self.quant_lo[j];
                     }
-                    let coef = self.blocks[block_idx][(i << 4) | j] as i32;
+                    let coef = self.blocks[block_idx][(i << 4) | j];
                     let mut abs_coef = coef.unsigned_abs() as i32;
                     let s = step as i32;
                     let des = if abs_coef <= 3 * s {

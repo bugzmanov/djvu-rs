@@ -1,0 +1,12 @@
+[package]
+name = "rdjvu-render"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+
+[dependencies]
+rdjvu-core = { path = "../rdjvu-core" }
+rdjvu-document = { path = "../rdjvu-document" }
+
+[dev-dependencies]
+rdjvu-document = { path = "../rdjvu-document" }

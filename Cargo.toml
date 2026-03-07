@@ -2,6 +2,6 @@
 members = ["rdjvu-bzz",
     "rdjvu-core",
     "rdjvu-document",
-    "rdjvu-iff", "rdjvu-iw44", "rdjvu-jb2", "rdjvu-zp",
+    "rdjvu-iff", "rdjvu-iw44", "rdjvu-jb2", "rdjvu-render", "rdjvu-zp",
 ]
 resolver = "2"

@@ -330,14 +330,18 @@ impl JB2Dict {
 // Blit a symbol onto a page bitmap (OR compositing)
 // ============================================================
 
-fn blit(page: &mut Vec<u8>, page_w: i32, page_h: i32, symbol: &Jbm, x: i32, y: i32) {
+fn blit(page: &mut Vec<u8>, mut blit_map: Option<&mut Vec<i32>>, blit_idx: i32, page_w: i32, page_h: i32, symbol: &Jbm, x: i32, y: i32) {
     for row in 0..symbol.height {
         for col in 0..symbol.width {
             if symbol.get(row, col) != 0 {
                 let px = x + col;
                 let py = y + row;
                 if px >= 0 && px < page_w && py >= 0 && py < page_h {
-                    page[(py * page_w + px) as usize] = 1;
+                    let idx = (py * page_w + px) as usize;
+                    page[idx] = 1;
+                    if let Some(ref mut map) = blit_map {
+                        map[idx] = blit_idx;
+                    }
                 }
             }
         }
@@ -353,13 +357,24 @@ fn page_to_bitmap(page: &[u8], width: i32, height: i32) -> Bitmap {
     for row in 0..height {
         for col in 0..width {
             if page[(row * width + col) as usize] != 0 {
-                // JB2 row 0 = bottom → PBM row (height - 1)
                 let pbm_y = (height - 1 - row) as u32;
                 bm.set(col as u32, pbm_y, true);
             }
         }
     }
     bm
+}
+
+fn flip_blit_map(map: &[i32], width: i32, height: i32) -> Vec<i32> {
+    let w = width as usize;
+    let h = height as usize;
+    let mut out = vec![-1i32; w * h];
+    for row in 0..h {
+        let src_off = row * w;
+        let dst_off = (h - 1 - row) * w;
+        out[dst_off..dst_off + w].copy_from_slice(&map[src_off..src_off + w]);
+    }
+    out
 }
 
 // ============================================================
@@ -369,6 +384,18 @@ fn page_to_bitmap(page: &[u8], width: i32, height: i32) -> Bitmap {
 /// Decode a JB2 image stream (Sjbz chunk data).
 /// Returns the page bitmap in PBM convention (row 0 = top).
 pub fn decode(data: &[u8], shared_dict: Option<&JB2Dict>) -> Result<Bitmap, &'static str> {
+    let (bm, _) = decode_inner(data, shared_dict, false)?;
+    Ok(bm)
+}
+
+/// Decode a JB2 image stream, returning both the bitmap and a per-pixel blit index map.
+/// The blit index map has the same dimensions as the bitmap (row 0 = top).
+/// Each pixel stores the 0-based blit index that last wrote to it, or -1 if no blit.
+pub fn decode_indexed(data: &[u8], shared_dict: Option<&JB2Dict>) -> Result<(Bitmap, Vec<i32>), &'static str> {
+    decode_inner(data, shared_dict, true)
+}
+
+fn decode_inner(data: &[u8], shared_dict: Option<&JB2Dict>, track_blits: bool) -> Result<(Bitmap, Vec<i32>), &'static str> {
     let mut zp = ZPDecoder::new(data);
 
     // Contexts
@@ -433,15 +460,16 @@ pub fn decode(data: &[u8], shared_dict: Option<&JB2Dict>) -> Result<Bitmap, &'st
     }
 
     // Initialize page bitmap
-    let mut page = vec![0u8; (image_width * image_height) as usize];
+    let page_size = (image_width * image_height) as usize;
+    let mut page = vec![0u8; page_size];
+    let mut blit_map = if track_blits { Some(vec![-1i32; page_size]) } else { None };
+    let mut blit_count: i32 = 0;
 
     // Positioning state
     let mut first_left: i32 = -1;
     let mut first_bottom: i32 = image_height - 1;
     let mut last_right: i32 = 0;
     let mut baseline = Baseline::new();
-
-    // --- Positioning helpers (closures can't capture everything, use inline) ---
 
     // --- Main decode loop ---
     loop {
@@ -461,7 +489,8 @@ pub fn decode(data: &[u8], shared_dict: Option<&JB2Dict>) -> Result<Bitmap, &'st
                     bm.width, bm.height,
                 );
 
-                blit(&mut page, image_width, image_height, &bm, x, y);
+                blit(&mut page, blit_map.as_mut(), blit_count, image_width, image_height, &bm, x, y);
+                blit_count += 1;
                 dict.push(bm.remove_empty_edges());
             }
             2 => {
@@ -484,7 +513,8 @@ pub fn decode(data: &[u8], shared_dict: Option<&JB2Dict>) -> Result<Bitmap, &'st
                     bm.width, bm.height,
                 );
 
-                blit(&mut page, image_width, image_height, &bm, x, y);
+                blit(&mut page, blit_map.as_mut(), blit_count, image_width, image_height, &bm, x, y);
+                blit_count += 1;
             }
             4 => {
                 // Matched with refinement: add to dict AND blit
@@ -503,7 +533,8 @@ pub fn decode(data: &[u8], shared_dict: Option<&JB2Dict>) -> Result<Bitmap, &'st
                     cbm.width, cbm.height,
                 );
 
-                blit(&mut page, image_width, image_height, &cbm, x, y);
+                blit(&mut page, blit_map.as_mut(), blit_count, image_width, image_height, &cbm, x, y);
+                blit_count += 1;
                 dict.push(cbm.remove_empty_edges());
             }
             5 => {
@@ -532,7 +563,8 @@ pub fn decode(data: &[u8], shared_dict: Option<&JB2Dict>) -> Result<Bitmap, &'st
                     cbm.width, cbm.height,
                 );
 
-                blit(&mut page, image_width, image_height, &cbm, x, y);
+                blit(&mut page, blit_map.as_mut(), blit_count, image_width, image_height, &cbm, x, y);
+                blit_count += 1;
             }
             7 => {
                 // Matched copy without refinement: blit
@@ -548,7 +580,8 @@ pub fn decode(data: &[u8], shared_dict: Option<&JB2Dict>) -> Result<Bitmap, &'st
                     bm_w, bm_h,
                 );
 
-                blit(&mut page, image_width, image_height, &dict[index], x, y);
+                blit(&mut page, blit_map.as_mut(), blit_count, image_width, image_height, &dict[index], x, y);
+                blit_count += 1;
             }
             8 => {
                 // Non-symbol data
@@ -561,20 +594,17 @@ pub fn decode(data: &[u8], shared_dict: Option<&JB2Dict>) -> Result<Bitmap, &'st
                 let x = left - 1;
                 let y = top - h;
 
-                blit(&mut page, image_width, image_height, &bm, x, y);
+                blit(&mut page, blit_map.as_mut(), blit_count, image_width, image_height, &bm, x, y);
+                blit_count += 1;
             }
-            9 => {
-                // Dictionary/shape inheritance (should only appear at start, ignore here)
-            }
+            9 => {}
             10 => {
-                // Comment: decode length, then skip bytes
                 let length = decode_num(&mut zp, &mut comment_length_ctx, 0, 262142);
                 for _ in 0..length {
                     decode_num(&mut zp, &mut comment_octet_ctx, 0, 255);
                 }
             }
             11 => {
-                // End of data
                 break;
             }
             _ => {
@@ -583,7 +613,12 @@ pub fn decode(data: &[u8], shared_dict: Option<&JB2Dict>) -> Result<Bitmap, &'st
         }
     }
 
-    Ok(page_to_bitmap(&page, image_width, image_height))
+    let bitmap = page_to_bitmap(&page, image_width, image_height);
+    let flipped_map = match blit_map {
+        Some(map) => flip_blit_map(&map, image_width, image_height),
+        None => vec![],
+    };
+    Ok((bitmap, flipped_map))
 }
 
 /// Decode a JB2 dictionary stream (Djbz chunk data).

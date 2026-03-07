@@ -183,12 +183,25 @@ impl<'a> Page<'a> {
             None => return Ok(None),
         };
 
-        // Check for INCL → shared JB2 dictionary
         let shared_dict = self.resolve_shared_dict()?;
 
         let bitmap = rdjvu_jb2::decode(sjbz, shared_dict.as_ref())
             .map_err(|e| Error::FormatError(e.to_string()))?;
         Ok(Some(bitmap))
+    }
+
+    /// Decode the JB2 mask with per-pixel blit index map (for FGbz palette compositing).
+    pub fn decode_mask_indexed(&self) -> Result<Option<(Bitmap, Vec<i32>)>, Error> {
+        let sjbz = match self.form.find_first(b"Sjbz") {
+            Some(c) => c.data(),
+            None => return Ok(None),
+        };
+
+        let shared_dict = self.resolve_shared_dict()?;
+
+        let result = rdjvu_jb2::decode_indexed(sjbz, shared_dict.as_ref())
+            .map_err(|e| Error::FormatError(e.to_string()))?;
+        Ok(Some(result))
     }
 
     /// Decode the IW44 background layer.

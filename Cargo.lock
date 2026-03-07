@@ -50,5 +50,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "rdjvu-render"
+version = "0.1.0"
+dependencies = [
+ "rdjvu-core",
+ "rdjvu-document",
+]
+
+[[package]]
 name = "rdjvu-zp"
 version = "0.1.0"
