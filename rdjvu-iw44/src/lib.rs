@@ -685,22 +685,30 @@ mod tests {
     }
 
     fn extract_bg44_chunks<'a>(file: &'a rdjvu_iff::DjvuFile<'a>) -> Vec<&'a [u8]> {
-        match &file.root {
-            rdjvu_iff::Chunk::Form { children, secondary_id, .. } => {
-                if secondary_id == b"DJVU" {
-                    children
-                        .iter()
-                        .filter_map(|c| match c {
-                            rdjvu_iff::Chunk::Leaf { id, data } if id == b"BG44" => Some(*data),
-                            _ => None,
-                        })
-                        .collect()
-                } else {
-                    vec![]
+        fn collect_from_djvu_form<'a>(chunk: &'a rdjvu_iff::Chunk<'a>) -> Option<Vec<&'a [u8]>> {
+            match chunk {
+                rdjvu_iff::Chunk::Form { secondary_id, children, .. } => {
+                    if secondary_id == b"DJVU" {
+                        let v = children
+                            .iter()
+                            .filter_map(|c| match c {
+                                rdjvu_iff::Chunk::Leaf { id, data } if id == b"BG44" => Some(*data),
+                                _ => None,
+                            })
+                            .collect::<Vec<_>>();
+                        return Some(v);
+                    }
+                    for c in children {
+                        if let Some(v) = collect_from_djvu_form(c) {
+                            return Some(v);
+                        }
+                    }
+                    None
                 }
+                _ => None,
             }
-            _ => vec![],
         }
+        collect_from_djvu_form(&file.root).unwrap_or_default()
     }
 
     fn find_ppm_data_start(ppm: &[u8]) -> usize {
