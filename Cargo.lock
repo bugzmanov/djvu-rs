@@ -21,5 +21,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "rdjvu-iw44"
+version = "0.1.0"
+dependencies = [
+ "rdjvu-core",
+ "rdjvu-iff",
+ "rdjvu-zp",
+]
+
+[[package]]
+name = "rdjvu-jb2"
+version = "0.1.0"
+dependencies = [
+ "rdjvu-core",
+ "rdjvu-iff",
+ "rdjvu-zp",
+]
+
+[[package]]
 name = "rdjvu-zp"
 version = "0.1.0"

@@ -1,0 +1,13 @@
+[package]
+name = "rdjvu-jb2"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+description = "JB2 bilevel image decoder for DjVu"
+
+[dependencies]
+rdjvu-core = { path = "../rdjvu-core" }
+rdjvu-zp = { path = "../rdjvu-zp" }
+
+[dev-dependencies]
+rdjvu-iff = { path = "../rdjvu-iff" }

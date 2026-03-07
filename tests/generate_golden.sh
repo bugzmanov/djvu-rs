@@ -51,19 +51,19 @@ echo "  djvu3spec_bundled sizes (first 10)"
 
 # --- Phase 3: JB2 mask outputs (PBM) ---
 echo "=== JB2 masks ==="
-ddjvu -format=pbm -page=1 "$ASSETS/boy_jb2.djvu" "$OUT/jb2/boy_jb2_mask.pbm" 2>&1
+ddjvu -format=pbm -mode=mask -page=1 "$ASSETS/boy_jb2.djvu" "$OUT/jb2/boy_jb2_mask.pbm" 2>&1
 echo "  boy_jb2_mask.pbm"
 
-ddjvu -format=pbm -page=1 "$ASSETS/carte.djvu" "$OUT/jb2/carte_p1_mask.pbm" 2>&1
+ddjvu -format=pbm -mode=mask -page=1 "$ASSETS/carte.djvu" "$OUT/jb2/carte_p1_mask.pbm" 2>&1
 echo "  carte_p1_mask.pbm"
 
-ddjvu -format=pbm -page=1 "$ASSETS/navm_fgbz.djvu" "$OUT/jb2/navm_fgbz_p1_mask.pbm" 2>&1
+ddjvu -format=pbm -mode=mask -page=1 "$ASSETS/navm_fgbz.djvu" "$OUT/jb2/navm_fgbz_p1_mask.pbm" 2>&1
 echo "  navm_fgbz_p1_mask.pbm"
 
-ddjvu -format=pbm -page=2 "$ASSETS/DjVu3Spec_bundled.djvu" "$OUT/jb2/djvu3spec_p2_mask.pbm" 2>&1
+ddjvu -format=pbm -mode=mask -page=2 "$ASSETS/DjVu3Spec_bundled.djvu" "$OUT/jb2/djvu3spec_p2_mask.pbm" 2>&1
 echo "  djvu3spec_p2_mask.pbm"
 
-ddjvu -format=pbm -page=1 "$ASSETS/DjVu3Spec_bundled.djvu" "$OUT/jb2/djvu3spec_p1_mask.pbm" 2>&1
+ddjvu -format=pbm -mode=mask -page=1 "$ASSETS/DjVu3Spec_bundled.djvu" "$OUT/jb2/djvu3spec_p1_mask.pbm" 2>&1
 echo "  djvu3spec_p1_mask.pbm"
 
 # --- Phase 4: IW44 background/foreground outputs (PPM) ---

@@ -86,22 +86,23 @@ impl<'a> ZPDecoder<'a> {
     pub fn decode(&mut self, ctx: &mut u8) -> bool {
         let st = *ctx as usize;
         let b_mps = st & 1;
-        let z = self.a.wrapping_add(P[st]);
+        // z can exceed u16 range (a + P[st] may be > 0xFFFF), so use u32
+        let z = self.a as u32 + P[st] as u32;
 
         // Fast path: no renormalization needed
-        if z <= self.f {
-            self.a = z;
+        if z <= self.f as u32 {
+            self.a = z as u16;
             return b_mps != 0;
         }
 
         // Compute decision boundary
-        let d = 0x6000u32 + ((self.a as u32 + z as u32) >> 2);
-        let z_clamped = if (z as u32) > d { d as u16 } else { z };
+        let d = 0x6000u32 + ((self.a as u32 + z) >> 2);
+        let z_clamped = if z > d { d } else { z };
 
-        if z_clamped > self.c {
+        if z_clamped > self.c as u32 {
             // LPS path
             let b = 1 - b_mps;
-            let z_comp = 0x10000u32 - z_clamped as u32;
+            let z_comp = 0x10000u32 - z_clamped;
             self.a = self.a.wrapping_add(z_comp as u16);
             self.c = self.c.wrapping_add(z_comp as u16);
             *ctx = DN[st];
@@ -125,7 +126,7 @@ impl<'a> ZPDecoder<'a> {
             }
 
             self.scount -= 1;
-            self.a = z_clamped.wrapping_mul(2);
+            self.a = (z_clamped << 1) as u16;
             self.c = ((self.c as u32) << 1 | ((self.buffer >> self.scount as u32) & 1)) as u16;
 
             if self.scount < 16 {
@@ -148,7 +149,7 @@ impl<'a> ZPDecoder<'a> {
     /// Uses threshold z = 0x8000 + (3*a >> 3).
     /// This is used by IW44 image decoding.
     pub fn decode_iw(&mut self) -> bool {
-        let z = 0x8000u16.wrapping_add((self.a.wrapping_add(self.a).wrapping_add(self.a)) >> 3);
+        let z = (0x8000u32 + (3u32 * self.a as u32) / 8) as u16;
         self.decode_passthrough_with_z(z)
     }
 
