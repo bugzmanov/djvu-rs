@@ -519,6 +519,14 @@ pub struct IW44Image {
     cslice: usize,
 }
 
+pub struct NormalizedPlanes {
+    pub width: u32,
+    pub height: u32,
+    pub y: Vec<i16>,
+    pub cb: Option<Vec<i16>>,
+    pub cr: Option<Vec<i16>>,
+}
+
 impl IW44Image {
     pub fn new() -> Self {
         IW44Image {
@@ -660,6 +668,64 @@ impl IW44Image {
             Ok(pm)
         }
     }
+
+    pub fn to_normalized_planes_subsample(&self, subsample: u32) -> Result<NormalizedPlanes, Error> {
+        if subsample == 0 {
+            return Err(Error::Unsupported("subsample must be >= 1"));
+        }
+        let y_codec = self.y_codec.as_ref()
+            .ok_or(Error::MissingChunk("BG44/FG44"))?;
+        let sub = subsample as usize;
+        let w = ((self.width as usize + sub - 1) / sub) as u32;
+        let h = ((self.height as usize + sub - 1) / sub) as u32;
+        let y_bm = y_codec.get_bytemap(sub);
+
+        let mut y = vec![0i16; (w * h) as usize];
+        for row in 0..h {
+            let out_row = h - 1 - row;
+            for col in 0..w {
+                let src_row = row as usize * sub;
+                let src_col = col as usize * sub;
+                let idx = src_row * y_bm.stride + src_col;
+                y[(out_row * w + col) as usize] = normalize(y_bm.data[idx]) as i16;
+            }
+        }
+
+        if self.is_color {
+            let cb_bm = self.cb_codec.as_ref()
+                .ok_or(Error::MissingChunk("BG44/FG44 Cb"))?.get_bytemap(sub);
+            let cr_bm = self.cr_codec.as_ref()
+                .ok_or(Error::MissingChunk("BG44/FG44 Cr"))?.get_bytemap(sub);
+            let mut cb = vec![0i16; (w * h) as usize];
+            let mut cr = vec![0i16; (w * h) as usize];
+            for row in 0..h {
+                let out_row = h - 1 - row;
+                for col in 0..w {
+                    let src_row = row as usize * sub;
+                    let src_col = col as usize * sub;
+                    let idx = src_row * y_bm.stride + src_col;
+                    let out_idx = (out_row * w + col) as usize;
+                    cb[out_idx] = normalize(cb_bm.data[idx]) as i16;
+                    cr[out_idx] = normalize(cr_bm.data[idx]) as i16;
+                }
+            }
+            Ok(NormalizedPlanes {
+                width: w,
+                height: h,
+                y,
+                cb: Some(cb),
+                cr: Some(cr),
+            })
+        } else {
+            Ok(NormalizedPlanes {
+                width: w,
+                height: h,
+                y,
+                cb: None,
+                cr: None,
+            })
+        }
+    }
 }
 
 #[cfg(test)]
@@ -705,6 +771,180 @@ mod tests {
             }
         }
         collect_from_djvu_form(&file.root).unwrap_or_default()
+    }
+
+    fn decode_chunks_with_options(chunks: &[&[u8]], preadvance_color_delay: bool) -> Result<IW44Image, &'static str> {
+        let mut img = IW44Image::new();
+        for data in chunks {
+            if data.len() < 2 {
+                return Err("IW44 chunk too short");
+            }
+            let serial = data[0];
+            let slices = data[1];
+            let payload_start;
+
+            if serial == 0 {
+                if data.len() < 9 {
+                    return Err("IW44 first chunk header too short");
+                }
+                let majver = data[2];
+                let is_grayscale = (majver >> 7) != 0;
+                let w = u16::from_be_bytes([data[4], data[5]]);
+                let h = u16::from_be_bytes([data[6], data[7]]);
+                let delay_byte = data[8];
+                let delay = delay_byte & 127;
+
+                img.width = w;
+                img.height = h;
+                img.is_color = !is_grayscale;
+                img.delay = delay;
+                img.cslice = 0;
+                img.y_codec = Some(IWDecoder::new(w as usize, h as usize));
+                if img.is_color {
+                    let mut cb = IWDecoder::new(w as usize, h as usize);
+                    let mut cr = IWDecoder::new(w as usize, h as usize);
+                    if preadvance_color_delay {
+                        for _ in 0..delay {
+                            cb.finish_code_slice();
+                            cr.finish_code_slice();
+                        }
+                    }
+                    img.cb_codec = Some(cb);
+                    img.cr_codec = Some(cr);
+                }
+                payload_start = 9;
+            } else {
+                if img.y_codec.is_none() {
+                    return Err("IW44 subsequent chunk before first chunk");
+                }
+                payload_start = 2;
+            }
+
+            let zp_data = &data[payload_start..];
+            let mut zp = ZPDecoder::new(zp_data);
+
+            for _ in 0..slices {
+                img.cslice += 1;
+                if let Some(ref mut y) = img.y_codec {
+                    y.decode_slice(&mut zp);
+                }
+                if img.is_color && img.cslice > img.delay as usize {
+                    if let Some(ref mut cb) = img.cb_codec {
+                        cb.decode_slice(&mut zp);
+                    }
+                    if let Some(ref mut cr) = img.cr_codec {
+                        cr.decode_slice(&mut zp);
+                    }
+                }
+            }
+        }
+        Ok(img)
+    }
+
+    fn reset_contexts(dec: &mut IWDecoder) {
+        dec.decode_bucket_ctx = [0; 1];
+        dec.decode_coef_ctx = [0; 80];
+        dec.activate_coef_ctx = [0; 16];
+        dec.increase_coef_ctx = [0; 1];
+    }
+
+    fn decode_chunks_with_context_resets(
+        chunks: &[&[u8]],
+        reset_each_chunk: bool,
+        reset_each_slice: bool,
+        reset_on_color_start: bool,
+    ) -> Result<IW44Image, &'static str> {
+        let mut img = IW44Image::new();
+        let mut color_started = false;
+        for data in chunks {
+            if data.len() < 2 {
+                return Err("IW44 chunk too short");
+            }
+            let serial = data[0];
+            let slices = data[1];
+            let payload_start;
+
+            if serial == 0 {
+                if data.len() < 9 {
+                    return Err("IW44 first chunk header too short");
+                }
+                let majver = data[2];
+                let is_grayscale = (majver >> 7) != 0;
+                let w = u16::from_be_bytes([data[4], data[5]]);
+                let h = u16::from_be_bytes([data[6], data[7]]);
+                let delay_byte = data[8];
+                let delay = delay_byte & 127;
+
+                img.width = w;
+                img.height = h;
+                img.is_color = !is_grayscale;
+                img.delay = delay;
+                img.cslice = 0;
+                img.y_codec = Some(IWDecoder::new(w as usize, h as usize));
+                if img.is_color {
+                    img.cb_codec = Some(IWDecoder::new(w as usize, h as usize));
+                    img.cr_codec = Some(IWDecoder::new(w as usize, h as usize));
+                }
+                payload_start = 9;
+            } else {
+                if img.y_codec.is_none() {
+                    return Err("IW44 subsequent chunk before first chunk");
+                }
+                payload_start = 2;
+            }
+
+            if reset_each_chunk {
+                if let Some(ref mut y) = img.y_codec {
+                    reset_contexts(y);
+                }
+                if let Some(ref mut cb) = img.cb_codec {
+                    reset_contexts(cb);
+                }
+                if let Some(ref mut cr) = img.cr_codec {
+                    reset_contexts(cr);
+                }
+            }
+
+            let zp_data = &data[payload_start..];
+            let mut zp = ZPDecoder::new(zp_data);
+
+            for _ in 0..slices {
+                img.cslice += 1;
+                if reset_each_slice {
+                    if let Some(ref mut y) = img.y_codec {
+                        reset_contexts(y);
+                    }
+                    if let Some(ref mut cb) = img.cb_codec {
+                        reset_contexts(cb);
+                    }
+                    if let Some(ref mut cr) = img.cr_codec {
+                        reset_contexts(cr);
+                    }
+                }
+
+                if let Some(ref mut y) = img.y_codec {
+                    y.decode_slice(&mut zp);
+                }
+                if img.is_color && img.cslice > img.delay as usize {
+                    if reset_on_color_start && !color_started {
+                        if let Some(ref mut cb) = img.cb_codec {
+                            reset_contexts(cb);
+                        }
+                        if let Some(ref mut cr) = img.cr_codec {
+                            reset_contexts(cr);
+                        }
+                        color_started = true;
+                    }
+                    if let Some(ref mut cb) = img.cb_codec {
+                        cb.decode_slice(&mut zp);
+                    }
+                    if let Some(ref mut cr) = img.cr_codec {
+                        cr.decode_slice(&mut zp);
+                    }
+                }
+            }
+        }
+        Ok(img)
     }
 
     fn find_ppm_data_start(ppm: &[u8]) -> usize {
@@ -1030,6 +1270,15 @@ mod tests {
             v.clamp(-128, 127)
         };
 
+        let norm_sym = |val: i16| -> i32 {
+            let v = if val >= 0 {
+                ((val as i32) + 32) >> 6
+            } else {
+                -((((-val) as i32) + 32) >> 6)
+            };
+            v.clamp(-128, 127)
+        };
+
         let build_pm = |y_off: i32, c_off: i32, mode: &str| -> Pixmap {
             let mut pm = Pixmap::new(w, h, 0, 0, 0, 255);
             for row in 0..h {
@@ -1083,6 +1332,44 @@ mod tests {
         compare("chroma_off33_shift", &|| build_pm(32, 33, "shift"));
         compare("chroma_off31_trunc_div", &|| build_pm(32, 31, "trunc_div"));
         compare("chroma_off33_trunc_div", &|| build_pm(32, 33, "trunc_div"));
+        compare("sym_chroma_shift", &|| {
+            let mut pm = Pixmap::new(w, h, 0, 0, 0, 255);
+            for row in 0..h {
+                let out_row = h - 1 - row;
+                for col in 0..w {
+                    let idx = row as usize * y_bm.stride + col as usize;
+                    let y = norm(y_bm.data[idx], 32);
+                    let b = norm_sym(cb_bm.data[idx]);
+                    let r = norm_sym(cr_bm.data[idx]);
+                    let t2 = r + (r >> 1);
+                    let t3 = y + 128 - (b >> 2);
+                    let red = (y + 128 + t2).clamp(0, 255) as u8;
+                    let green = (t3 - (t2 >> 1)).clamp(0, 255) as u8;
+                    let blue = (t3 + (b << 1)).clamp(0, 255) as u8;
+                    pm.set_rgb(col, out_row, red, green, blue);
+                }
+            }
+            pm
+        });
+        compare("sym_all_shift", &|| {
+            let mut pm = Pixmap::new(w, h, 0, 0, 0, 255);
+            for row in 0..h {
+                let out_row = h - 1 - row;
+                for col in 0..w {
+                    let idx = row as usize * y_bm.stride + col as usize;
+                    let y = norm_sym(y_bm.data[idx]);
+                    let b = norm_sym(cb_bm.data[idx]);
+                    let r = norm_sym(cr_bm.data[idx]);
+                    let t2 = r + (r >> 1);
+                    let t3 = y + 128 - (b >> 2);
+                    let red = (y + 128 + t2).clamp(0, 255) as u8;
+                    let green = (t3 - (t2 >> 1)).clamp(0, 255) as u8;
+                    let blue = (t3 + (b << 1)).clamp(0, 255) as u8;
+                    pm.set_rgb(col, out_row, red, green, blue);
+                }
+            }
+            pm
+        });
     }
 
     #[test]
@@ -1231,6 +1518,435 @@ mod tests {
                 abs[1] as f64 / px as f64,
                 abs[2] as f64 / px as f64
             );
+        }
+    }
+
+    #[test]
+    fn debug_carte_bg_progressive_luma_mismatch() {
+        let data = std::fs::read(assets_path().join("carte.djvu")).unwrap();
+        let file = rdjvu_iff::parse(&data).unwrap();
+        let chunks = extract_bg44_chunks(&file);
+
+        for nchunks in 1..=chunks.len() {
+            let ref_path = std::path::PathBuf::from(format!("/tmp/rdjvu_debug/carte_bg_{}_ref.ppm", nchunks));
+            if !ref_path.exists() {
+                continue;
+            }
+
+            let mut img = IW44Image::new();
+            for chunk in chunks.iter().take(nchunks) {
+                img.decode_chunk(chunk).unwrap();
+            }
+            let actual = img.to_pixmap().unwrap().to_ppm();
+            let expected = std::fs::read(ref_path).unwrap();
+            let header_end = find_ppm_data_start(&actual);
+            let a = &actual[header_end..];
+            let e = &expected[header_end..];
+            let px = (a.len().min(e.len())) / 3;
+            let mut gray_diff_px = 0usize;
+            let mut gray_abs = 0u64;
+            let mut chroma_abs = [0u64; 2];
+
+            for p in 0..px {
+                let i = p * 3;
+                let ar = a[i] as i32;
+                let ag = a[i + 1] as i32;
+                let ab = a[i + 2] as i32;
+                let er = e[i] as i32;
+                let eg = e[i + 1] as i32;
+                let eb = e[i + 2] as i32;
+
+                let ay = (77 * ar + 150 * ag + 29 * ab + 128) >> 8;
+                let ey = (77 * er + 150 * eg + 29 * eb + 128) >> 8;
+                if ay != ey {
+                    gray_diff_px += 1;
+                }
+                gray_abs += (ay - ey).unsigned_abs() as u64;
+
+                let acb = ab - ay;
+                let ecb = eb - ey;
+                let acr = ar - ay;
+                let ecr = er - ey;
+                chroma_abs[0] += (acb - ecb).unsigned_abs() as u64;
+                chroma_abs[1] += (acr - ecr).unsigned_abs() as u64;
+            }
+
+            eprintln!(
+                "carte bg chunks={} gray_diff_px={} ({:.1}%) mean_abs_gray={:.4} mean_abs_cb={} mean_abs_cr={}",
+                nchunks,
+                gray_diff_px,
+                gray_diff_px as f64 / px as f64 * 100.0,
+                gray_abs as f64 / px as f64,
+                chroma_abs[0] as f64 / px as f64,
+                chroma_abs[1] as f64 / px as f64
+            );
+        }
+    }
+
+    #[test]
+    fn debug_colorbook_bg_luma_mismatch() {
+        let ref_path = std::path::Path::new("/tmp/rdjvu_debug/colorbook_bg_ref.ppm");
+        if !ref_path.exists() {
+            return;
+        }
+
+        let data = std::fs::read(assets_path().join("colorbook.djvu")).unwrap();
+        let file = rdjvu_iff::parse(&data).unwrap();
+        let chunks = extract_bg44_chunks(&file);
+        let mut img = IW44Image::new();
+        for chunk in &chunks {
+            img.decode_chunk(chunk).unwrap();
+        }
+
+        let actual = img.to_pixmap().unwrap().to_ppm();
+        let expected = std::fs::read(ref_path).unwrap();
+        let header_end = find_ppm_data_start(&actual);
+        let a = &actual[header_end..];
+        let e = &expected[header_end..];
+        let px = (a.len().min(e.len())) / 3;
+        let mut diff_px = 0usize;
+        let mut gray_diff_px = 0usize;
+        let mut abs = [0u64; 3];
+        let mut gray_abs = 0u64;
+        let mut chroma_abs = [0u64; 2];
+
+        for p in 0..px {
+            let i = p * 3;
+            let ar = a[i] as i32;
+            let ag = a[i + 1] as i32;
+            let ab = a[i + 2] as i32;
+            let er = e[i] as i32;
+            let eg = e[i + 1] as i32;
+            let eb = e[i + 2] as i32;
+
+            if ar != er || ag != eg || ab != eb {
+                diff_px += 1;
+            }
+
+            abs[0] += (ar - er).unsigned_abs() as u64;
+            abs[1] += (ag - eg).unsigned_abs() as u64;
+            abs[2] += (ab - eb).unsigned_abs() as u64;
+
+            let ay = (77 * ar + 150 * ag + 29 * ab + 128) >> 8;
+            let ey = (77 * er + 150 * eg + 29 * eb + 128) >> 8;
+            if ay != ey {
+                gray_diff_px += 1;
+            }
+            gray_abs += (ay - ey).unsigned_abs() as u64;
+
+            let acb = ab - ay;
+            let ecb = eb - ey;
+            let acr = ar - ay;
+            let ecr = er - ey;
+            chroma_abs[0] += (acb - ecb).unsigned_abs() as u64;
+            chroma_abs[1] += (acr - ecr).unsigned_abs() as u64;
+        }
+
+        eprintln!(
+            "colorbook bg diff_px={} ({:.1}%) mean_abs_rgb=({:.4},{:.4},{:.4}) gray_diff_px={} ({:.1}%) mean_abs_gray={:.4} mean_abs_cb={} mean_abs_cr={}",
+            diff_px,
+            diff_px as f64 / px as f64 * 100.0,
+            abs[0] as f64 / px as f64,
+            abs[1] as f64 / px as f64,
+            abs[2] as f64 / px as f64,
+            gray_diff_px,
+            gray_diff_px as f64 / px as f64 * 100.0,
+            gray_abs as f64 / px as f64,
+            chroma_abs[0] as f64 / px as f64,
+            chroma_abs[1] as f64 / px as f64
+        );
+    }
+
+    #[test]
+    fn debug_iw44_numeric_ranges() {
+        for file in ["carte.djvu", "colorbook.djvu", "chicken.djvu"] {
+            let data = std::fs::read(assets_path().join(file)).unwrap();
+            let parsed = rdjvu_iff::parse(&data).unwrap();
+            let chunks = extract_bg44_chunks(&parsed);
+            if chunks.is_empty() {
+                continue;
+            }
+
+            let mut img = IW44Image::new();
+            for chunk in &chunks {
+                img.decode_chunk(chunk).unwrap();
+            }
+
+            let summarize_decoder = |label: &str, dec: &IWDecoder| {
+                let mut coef_min = i16::MAX;
+                let mut coef_max = i16::MIN;
+                let mut coef_edge = 0usize;
+                for block in &dec.blocks {
+                    for &v in block {
+                        coef_min = coef_min.min(v);
+                        coef_max = coef_max.max(v);
+                        if v <= i16::MIN + 512 || v >= i16::MAX - 512 {
+                            coef_edge += 1;
+                        }
+                    }
+                }
+
+                let bm = dec.get_bytemap(1);
+                let mut bm_min = i16::MAX;
+                let mut bm_max = i16::MIN;
+                let mut bm_edge = 0usize;
+                for &v in &bm.data {
+                    bm_min = bm_min.min(v);
+                    bm_max = bm_max.max(v);
+                    if v <= i16::MIN + 512 || v >= i16::MAX - 512 {
+                        bm_edge += 1;
+                    }
+                }
+
+                eprintln!(
+                    "{} {} coef=[{},{}] coef_edge={} bm=[{},{}] bm_edge={}",
+                    file, label, coef_min, coef_max, coef_edge, bm_min, bm_max, bm_edge
+                );
+            };
+
+            summarize_decoder("Y", img.y_codec.as_ref().unwrap());
+            if let Some(cb) = img.cb_codec.as_ref() {
+                summarize_decoder("Cb", cb);
+            }
+            if let Some(cr) = img.cr_codec.as_ref() {
+                summarize_decoder("Cr", cr);
+            }
+        }
+    }
+
+    #[test]
+    fn debug_carte_bg_chunk1_block_profile() {
+        let ref_path = std::path::Path::new("/tmp/rdjvu_debug/carte_bg_1_ref.ppm");
+        if !ref_path.exists() {
+            return;
+        }
+
+        let data = std::fs::read(assets_path().join("carte.djvu")).unwrap();
+        let file = rdjvu_iff::parse(&data).unwrap();
+        let chunks = extract_bg44_chunks(&file);
+        let mut img = IW44Image::new();
+        img.decode_chunk(chunks[0]).unwrap();
+
+        let actual = img.to_pixmap().unwrap().to_ppm();
+        let expected = std::fs::read(ref_path).unwrap();
+        let header_end = find_ppm_data_start(&actual);
+        let a = &actual[header_end..];
+        let e = &expected[header_end..];
+        let w = img.width as usize;
+        let h = img.height as usize;
+        let bw = w.div_ceil(32);
+        let bh = h.div_ceil(32);
+        let mut block_diff = vec![0usize; bw * bh];
+        let mut block_abs = vec![[0u64; 3]; bw * bh];
+        let mut total = 0usize;
+        for y in 0..h {
+            for x in 0..w {
+                let i = (y * w + x) * 3;
+                let bi = (y / 32) * bw + (x / 32);
+                let dr = (a[i] as i32 - e[i] as i32).unsigned_abs() as u64;
+                let dg = (a[i + 1] as i32 - e[i + 1] as i32).unsigned_abs() as u64;
+                let db = (a[i + 2] as i32 - e[i + 2] as i32).unsigned_abs() as u64;
+                if dr != 0 || dg != 0 || db != 0 {
+                    block_diff[bi] += 1;
+                    total += 1;
+                }
+                block_abs[bi][0] += dr;
+                block_abs[bi][1] += dg;
+                block_abs[bi][2] += db;
+            }
+        }
+
+        let mut ranked = Vec::new();
+        for by in 0..bh {
+            for bx in 0..bw {
+                let i = by * bw + bx;
+                ranked.push((block_diff[i], block_abs[i], bx, by));
+            }
+        }
+        ranked.sort_unstable_by(|a, b| b.0.cmp(&a.0));
+
+        eprintln!("carte chunk1 total_mismatch_px={} blocks={}x{}", total, bw, bh);
+        for (rank, (diff, abs, bx, by)) in ranked.into_iter().take(12).enumerate() {
+            eprintln!(
+                "rank={} block=({}, {}) diff_px={} mean_abs=({:.3},{:.3},{:.3})",
+                rank + 1,
+                bx,
+                by,
+                diff,
+                abs[0] as f64 / (32 * 32) as f64,
+                abs[1] as f64 / (32 * 32) as f64,
+                abs[2] as f64 / (32 * 32) as f64
+            );
+        }
+    }
+
+    #[test]
+    fn debug_carte_bg_delay_candidates() {
+        let ref_path = std::path::Path::new("/tmp/rdjvu_debug/carte_bg_4_ref.ppm");
+        if !ref_path.exists() {
+            return;
+        }
+
+        let data = std::fs::read(assets_path().join("carte.djvu")).unwrap();
+        let file = rdjvu_iff::parse(&data).unwrap();
+        let chunks = extract_bg44_chunks(&file);
+        let expected = std::fs::read(ref_path).unwrap();
+
+        for delay in 7u8..=13u8 {
+            let mut mutated: Vec<Vec<u8>> = chunks.iter().map(|c| c.to_vec()).collect();
+            mutated[0][8] = delay;
+
+            let mut img = IW44Image::new();
+            let mut ok = true;
+            for chunk in &mutated {
+                if img.decode_chunk(chunk).is_err() {
+                    ok = false;
+                    break;
+                }
+            }
+            if !ok {
+                eprintln!("carte bg delay={} decode_error", delay);
+                continue;
+            }
+
+            let actual = img.to_pixmap().unwrap().to_ppm();
+            let header_end = find_ppm_data_start(&actual);
+            let a = &actual[header_end..];
+            let e = &expected[header_end..];
+            let px = (a.len().min(e.len())) / 3;
+            let mut diff_px = 0usize;
+            let mut diff_bytes = 0usize;
+            for p in 0..px {
+                let i = p * 3;
+                let dr = a[i] != e[i];
+                let dg = a[i + 1] != e[i + 1];
+                let db = a[i + 2] != e[i + 2];
+                if dr || dg || db {
+                    diff_px += 1;
+                }
+                diff_bytes += dr as usize + dg as usize + db as usize;
+            }
+            eprintln!(
+                "carte bg delay={} diff_px={} diff_bytes={}",
+                delay, diff_px, diff_bytes
+            );
+        }
+    }
+
+    #[test]
+    fn debug_color_delay_preadvance_candidate() {
+        let cases = [
+            ("carte", "carte.djvu", "/tmp/rdjvu_debug/carte_bg_4_ref.ppm"),
+            ("colorbook", "colorbook.djvu", "/tmp/rdjvu_debug/colorbook_bg_ref.ppm"),
+            ("chicken", "chicken.djvu", "__golden__"),
+        ];
+
+        for (tag, file_name, ref_path) in cases {
+            let data = std::fs::read(assets_path().join(file_name)).unwrap();
+            let parsed = rdjvu_iff::parse(&data).unwrap();
+            let chunks = extract_bg44_chunks(&parsed);
+            if chunks.is_empty() {
+                continue;
+            }
+
+            let expected = if ref_path == "__golden__" {
+                std::fs::read(golden_path().join("chicken_bg.ppm")).unwrap()
+            } else {
+                let rp = std::path::Path::new(ref_path);
+                if !rp.exists() {
+                    continue;
+                }
+                std::fs::read(rp).unwrap()
+            };
+
+            for preadvance in [false, true] {
+                let img = decode_chunks_with_options(&chunks, preadvance).unwrap();
+                let actual = img.to_pixmap().unwrap().to_ppm();
+                let header_end = find_ppm_data_start(&actual);
+                let a = &actual[header_end..];
+                let e = &expected[header_end..];
+                let px = (a.len().min(e.len())) / 3;
+                let mut diff_px = 0usize;
+                let mut diff_bytes = 0usize;
+                for p in 0..px {
+                    let i = p * 3;
+                    let dr = a[i] != e[i];
+                    let dg = a[i + 1] != e[i + 1];
+                    let db = a[i + 2] != e[i + 2];
+                    if dr || dg || db {
+                        diff_px += 1;
+                    }
+                    diff_bytes += dr as usize + dg as usize + db as usize;
+                }
+                eprintln!(
+                    "{} preadvance={} diff_px={} diff_bytes={}",
+                    tag, preadvance, diff_px, diff_bytes
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn debug_context_reset_candidates() {
+        let cases = [
+            ("carte", "carte.djvu", "/tmp/rdjvu_debug/carte_bg_4_ref.ppm"),
+            ("colorbook", "colorbook.djvu", "/tmp/rdjvu_debug/colorbook_bg_ref.ppm"),
+            ("chicken", "chicken.djvu", "__golden__"),
+        ];
+        let variants = [
+            ("baseline", false, false, false),
+            ("chunk", true, false, false),
+            ("slice", false, true, false),
+            ("color_start", false, false, true),
+        ];
+
+        for (tag, file_name, ref_path) in cases {
+            let data = std::fs::read(assets_path().join(file_name)).unwrap();
+            let parsed = rdjvu_iff::parse(&data).unwrap();
+            let chunks = extract_bg44_chunks(&parsed);
+            if chunks.is_empty() {
+                continue;
+            }
+
+            let expected = if ref_path == "__golden__" {
+                std::fs::read(golden_path().join("chicken_bg.ppm")).unwrap()
+            } else {
+                let rp = std::path::Path::new(ref_path);
+                if !rp.exists() {
+                    continue;
+                }
+                std::fs::read(rp).unwrap()
+            };
+
+            for (name, reset_each_chunk, reset_each_slice, reset_on_color_start) in variants {
+                let img = decode_chunks_with_context_resets(
+                    &chunks,
+                    reset_each_chunk,
+                    reset_each_slice,
+                    reset_on_color_start,
+                ).unwrap();
+                let actual = img.to_pixmap().unwrap().to_ppm();
+                let header_end = find_ppm_data_start(&actual);
+                let a = &actual[header_end..];
+                let e = &expected[header_end..];
+                let px = (a.len().min(e.len())) / 3;
+                let mut diff_px = 0usize;
+                let mut diff_bytes = 0usize;
+                for p in 0..px {
+                    let i = p * 3;
+                    let dr = a[i] != e[i];
+                    let dg = a[i + 1] != e[i + 1];
+                    let db = a[i + 2] != e[i + 2];
+                    if dr || dg || db {
+                        diff_px += 1;
+                    }
+                    diff_bytes += dr as usize + dg as usize + db as usize;
+                }
+                eprintln!(
+                    "{} variant={} diff_px={} diff_bytes={}",
+                    tag, name, diff_px, diff_bytes
+                );
+            }
         }
     }
 }

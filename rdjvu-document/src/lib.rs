@@ -3,6 +3,8 @@ use rdjvu_iff::{self, Chunk, DjvuFile};
 use rdjvu_iw44::IW44Image;
 use rdjvu_jb2::JB2Dict;
 
+pub use rdjvu_iw44::NormalizedPlanes;
+
 /// Rotation values from INFO chunk flags.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Rotation {
@@ -206,20 +208,10 @@ impl<'a> Page<'a> {
 
     /// Decode the IW44 background layer.
     pub fn decode_background(&self) -> Result<Option<Pixmap>, Error> {
-        let bg_chunks: Vec<&[u8]> = self.form.find_all(b"BG44")
-            .into_iter()
-            .map(|c| c.data())
-            .collect();
-
-        if bg_chunks.is_empty() {
-            return Ok(None);
-        }
-
-        let mut img = IW44Image::new();
-        for chunk_data in &bg_chunks {
-            img.decode_chunk(chunk_data)
-                .map_err(|e| Error::FormatError(e.to_string()))?;
-        }
+        let img = match self.decode_iw44_layer(b"BG44")? {
+            Some(img) => img,
+            None => return Ok(None),
+        };
         let pm = img.to_pixmap()
             .map_err(|e| Error::FormatError(e.to_string()))?;
         Ok(Some(pm))
@@ -227,23 +219,23 @@ impl<'a> Page<'a> {
 
     /// Decode the IW44 foreground layer.
     pub fn decode_foreground(&self) -> Result<Option<Pixmap>, Error> {
-        let fg_chunks: Vec<&[u8]> = self.form.find_all(b"FG44")
-            .into_iter()
-            .map(|c| c.data())
-            .collect();
-
-        if fg_chunks.is_empty() {
-            return Ok(None);
-        }
-
-        let mut img = IW44Image::new();
-        for chunk_data in &fg_chunks {
-            img.decode_chunk(chunk_data)
-                .map_err(|e| Error::FormatError(e.to_string()))?;
-        }
+        let img = match self.decode_iw44_layer(b"FG44")? {
+            Some(img) => img,
+            None => return Ok(None),
+        };
         let pm = img.to_pixmap()
             .map_err(|e| Error::FormatError(e.to_string()))?;
         Ok(Some(pm))
+    }
+
+    pub fn decode_background_planes(&self) -> Result<Option<NormalizedPlanes>, Error> {
+        let img = match self.decode_iw44_layer(b"BG44")? {
+            Some(img) => img,
+            None => return Ok(None),
+        };
+        let planes = img.to_normalized_planes_subsample(1)
+            .map_err(|e| Error::FormatError(e.to_string()))?;
+        Ok(Some(planes))
     }
 
     /// Parse the FGbz palette chunk.
@@ -276,6 +268,24 @@ impl<'a> Page<'a> {
         let dict = rdjvu_jb2::decode_dict(djbz, None)
             .map_err(|e| Error::FormatError(e.to_string()))?;
         Ok(Some(dict))
+    }
+
+    fn decode_iw44_layer(&self, chunk_id: &[u8; 4]) -> Result<Option<IW44Image>, Error> {
+        let chunks: Vec<&[u8]> = self.form.find_all(chunk_id)
+            .into_iter()
+            .map(|c| c.data())
+            .collect();
+
+        if chunks.is_empty() {
+            return Ok(None);
+        }
+
+        let mut img = IW44Image::new();
+        for chunk_data in &chunks {
+            img.decode_chunk(chunk_data)
+                .map_err(|e| Error::FormatError(e.to_string()))?;
+        }
+        Ok(Some(img))
     }
 }
 
