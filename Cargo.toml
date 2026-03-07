@@ -1,0 +1,6 @@
+[workspace]
+members = ["rdjvu-bzz",
+    "rdjvu-core",
+    "rdjvu-iff", "rdjvu-zp",
+]
+resolver = "2"

@@ -1,0 +1,9 @@
+[package]
+name = "rdjvu-iff"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+description = "IFF85 chunk parser for DjVu files"
+
+[dependencies]
+rdjvu-core = { path = "../rdjvu-core" }
