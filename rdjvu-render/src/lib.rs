@@ -85,7 +85,7 @@ fn composite_mask_fg(w: u32, h: u32, mask: &Bitmap, fg: &Pixmap) -> Pixmap {
     for y in 0..mh {
         for x in 0..mw {
             if mask.get(x, y) {
-                let (r, g, b) = sample_layer(fg, x, y, fg_scale);
+                let (r, g, b) = sample_layer_nearest(fg, x, y, fg_scale);
                 out.set_rgb(x, y, r, g, b);
             }
         }
@@ -105,10 +105,10 @@ fn composite_3layer(w: u32, h: u32, mask: &Bitmap, bg: &Pixmap, fg: &Pixmap) -> 
         for x in 0..w {
             let is_fg = x < mask.width && y < mask.height && mask.get(x, y);
             if is_fg {
-                let (r, g, b) = sample_layer(fg, x, y, fg_scale);
+                let (r, g, b) = sample_layer_nearest(fg, x, y, fg_scale);
                 out.set_rgb(x, y, r, g, b);
             } else {
-                let (r, g, b) = sample_layer(bg, x, y, bg_scale);
+                let (r, g, b) = sample_layer_bilinear(bg, x, y, bg_scale);
                 out.set_rgb(x, y, r, g, b);
             }
         }
@@ -167,7 +167,7 @@ fn composite_palette(w: u32, h: u32, mask: &Bitmap, blit_map: &[i32], bg: &Pixma
                 };
                 out.set_rgb(x, y, r, g, b);
             } else {
-                let (r, g, b) = sample_layer(bg, x, y, bg_scale);
+                let (r, g, b) = sample_layer_bilinear(bg, x, y, bg_scale);
                 out.set_rgb(x, y, r, g, b);
             }
         }
@@ -207,7 +207,16 @@ fn layer_scale(page_w: u32, layer_w: u32) -> u32 {
     ratio.round().max(1.0) as u32
 }
 
-fn sample_layer(src: &Pixmap, x: u32, y: u32, scale: u32) -> (u8, u8, u8) {
+fn sample_layer_nearest(src: &Pixmap, x: u32, y: u32, scale: u32) -> (u8, u8, u8) {
+    if scale <= 1 {
+        return src.get_rgb(x.min(src.width - 1), y.min(src.height - 1));
+    }
+    let sx = (x / scale).min(src.width - 1);
+    let sy = (y / scale).min(src.height - 1);
+    src.get_rgb(sx, sy)
+}
+
+fn sample_layer_bilinear(src: &Pixmap, x: u32, y: u32, scale: u32) -> (u8, u8, u8) {
     if scale <= 1 {
         return src.get_rgb(x.min(src.width - 1), y.min(src.height - 1));
     }
@@ -252,7 +261,7 @@ fn upscale(w: u32, h: u32, src: &Pixmap) -> Pixmap {
     let mut out = Pixmap::white(w, h);
     for y in 0..h {
         for x in 0..w {
-            let (r, g, b) = sample_layer(src, x, y, scale);
+            let (r, g, b) = sample_layer_bilinear(src, x, y, scale);
             out.set_rgb(x, y, r, g, b);
         }
     }
@@ -514,7 +523,7 @@ mod tests {
             let sy = (y / scale).min(bg.height - 1);
             bg.get_rgb(sx, sy)
         });
-        compare("bilinear_round_scale", &|x, y| sample_layer(&bg, x, y, scale));
+        compare("bilinear_round_scale", &|x, y| sample_layer_bilinear(&bg, x, y, scale));
 
         let bilinear_map = |x: u32, y: u32, mode: &str, round_mode: &str| -> (u8, u8, u8) {
             let sw = bg.width as f64;
@@ -583,8 +592,8 @@ mod tests {
             let dh = h as i64;
             let sx_fp = (((2 * x as i64 + 1) * sw << 16) / (2 * dw)) - (1 << 15);
             let sy_fp = (((2 * y as i64 + 1) * sh << 16) / (2 * dh)) - (1 << 15);
-            let sx_fp = sx_fp.clamp(0, ((sw - 1) << 16));
-            let sy_fp = sy_fp.clamp(0, ((sh - 1) << 16));
+            let sx_fp = sx_fp.clamp(0, (sw - 1) << 16);
+            let sy_fp = sy_fp.clamp(0, (sh - 1) << 16);
             let sx0 = (sx_fp >> 16) as u32;
             let sy0 = (sy_fp >> 16) as u32;
             let sx1 = (sx0 + 1).min(bg.width - 1);
@@ -639,6 +648,220 @@ mod tests {
                     + to_lin(v01) * (1.0 - fx) * fy
                     + to_lin(v11) * fx * fy;
                 to_srgb(v)
+            };
+            (
+                interp(r00, r10, r01, r11),
+                interp(g00, g10, g01, g11),
+                interp(b00, b10, b01, b11),
+            )
+        });
+    }
+
+    #[test]
+    fn debug_colorbook_bg_scaler_candidates() {
+        let ref_path = std::path::Path::new("/tmp/rdjvu_debug/colorbook_p1_bg.ppm");
+        if !ref_path.exists() {
+            return;
+        }
+        let expected = std::fs::read(ref_path).unwrap();
+        let data = std::fs::read(assets_path().join("colorbook.djvu")).unwrap();
+        let doc = Document::parse(&data).unwrap();
+        let page = doc.page(0).unwrap();
+        let bg = page.decode_background().unwrap().unwrap();
+        let w = page.info.width as u32;
+        let h = page.info.height as u32;
+
+        let compare = |name: &str, sample: &dyn Fn(u32, u32) -> (u8, u8, u8)| {
+            let mut out = Pixmap::white(w, h);
+            for y in 0..h {
+                for x in 0..w {
+                    let (r, g, b) = sample(x, y);
+                    out.set_rgb(x, y, r, g, b);
+                }
+            }
+            let actual = out.to_ppm();
+            let header_end = actual.iter().position(|&b| b == b'\n').unwrap() + 1;
+            let header_end = header_end + actual[header_end..].iter().position(|&b| b == b'\n').unwrap() + 1;
+            let header_end = header_end + actual[header_end..].iter().position(|&b| b == b'\n').unwrap() + 1;
+            let a = &actual[header_end..];
+            let e = &expected[header_end..];
+            let px = (a.len().min(e.len())) / 3;
+            let mut diff_px = 0usize;
+            for p in 0..px {
+                let i = p * 3;
+                if a[i] != e[i] || a[i + 1] != e[i + 1] || a[i + 2] != e[i + 2] {
+                    diff_px += 1;
+                }
+            }
+            eprintln!("colorbook bg scaler {} mismatch_px={}", name, diff_px);
+        };
+
+        let scale = (w as f64 / bg.width as f64).round().max(1.0) as u32;
+        compare("nearest_round_scale", &|x, y| {
+            let sx = (x / scale).min(bg.width - 1);
+            let sy = (y / scale).min(bg.height - 1);
+            bg.get_rgb(sx, sy)
+        });
+        compare("bilinear_round_scale", &|x, y| sample_layer_bilinear(&bg, x, y, scale));
+
+        compare("nearest_true_dims", &|x, y| {
+            let sx = ((x as u64 * bg.width as u64) / w as u64) as u32;
+            let sy = ((y as u64 * bg.height as u64) / h as u64) as u32;
+            bg.get_rgb(sx.min(bg.width - 1), sy.min(bg.height - 1))
+        });
+
+        compare("bilinear_true_dims", &|x, y| {
+            let sw = bg.width as f64;
+            let sh = bg.height as f64;
+            let dw = w as f64;
+            let dh = h as f64;
+            let sx = ((x as f64 + 0.5) * sw / dw - 0.5).clamp(0.0, sw - 1.0);
+            let sy = ((y as f64 + 0.5) * sh / dh - 0.5).clamp(0.0, sh - 1.0);
+            let sx0 = sx as u32;
+            let sy0 = sy as u32;
+            let sx1 = (sx0 + 1).min(bg.width - 1);
+            let sy1 = (sy0 + 1).min(bg.height - 1);
+            let fx = sx - sx0 as f64;
+            let fy = sy - sy0 as f64;
+            let (r00, g00, b00) = bg.get_rgb(sx0, sy0);
+            let (r10, g10, b10) = bg.get_rgb(sx1, sy0);
+            let (r01, g01, b01) = bg.get_rgb(sx0, sy1);
+            let (r11, g11, b11) = bg.get_rgb(sx1, sy1);
+            let interp = |v00: u8, v10: u8, v01: u8, v11: u8| -> u8 {
+                let v = v00 as f64 * (1.0 - fx) * (1.0 - fy)
+                    + v10 as f64 * fx * (1.0 - fy)
+                    + v01 as f64 * (1.0 - fx) * fy
+                    + v11 as f64 * fx * fy;
+                (v + 0.5).clamp(0.0, 255.0) as u8
+            };
+            (
+                interp(r00, r10, r01, r11),
+                interp(g00, g10, g01, g11),
+                interp(b00, b10, b01, b11),
+            )
+        });
+
+        let eff_w = w / 3;
+        let eff_h = h / 3;
+        compare("nearest_virtual_floor3", &|x, y| {
+            let sx = (x / 3).min(eff_w.saturating_sub(1));
+            let sy = (y / 3).min(eff_h.saturating_sub(1));
+            bg.get_rgb(sx.min(bg.width - 1), sy.min(bg.height - 1))
+        });
+
+        compare("bilinear_virtual_floor3", &|x, y| {
+            let sw = eff_w as f64;
+            let sh = eff_h as f64;
+            let dw = (eff_w * 3) as f64;
+            let dh = (eff_h * 3) as f64;
+            let sx = ((x.min(eff_w * 3 - 1) as f64 + 0.5) * sw / dw - 0.5).clamp(0.0, sw - 1.0);
+            let sy = ((y.min(eff_h * 3 - 1) as f64 + 0.5) * sh / dh - 0.5).clamp(0.0, sh - 1.0);
+            let sx0 = sx as u32;
+            let sy0 = sy as u32;
+            let sx1 = (sx0 + 1).min(eff_w.saturating_sub(1));
+            let sy1 = (sy0 + 1).min(eff_h.saturating_sub(1));
+            let fx = sx - sx0 as f64;
+            let fy = sy - sy0 as f64;
+            let (r00, g00, b00) = bg.get_rgb(sx0.min(bg.width - 1), sy0.min(bg.height - 1));
+            let (r10, g10, b10) = bg.get_rgb(sx1.min(bg.width - 1), sy0.min(bg.height - 1));
+            let (r01, g01, b01) = bg.get_rgb(sx0.min(bg.width - 1), sy1.min(bg.height - 1));
+            let (r11, g11, b11) = bg.get_rgb(sx1.min(bg.width - 1), sy1.min(bg.height - 1));
+            let interp = |v00: u8, v10: u8, v01: u8, v11: u8| -> u8 {
+                let v = v00 as f64 * (1.0 - fx) * (1.0 - fy)
+                    + v10 as f64 * fx * (1.0 - fy)
+                    + v01 as f64 * (1.0 - fx) * fy
+                    + v11 as f64 * fx * fy;
+                (v + 0.5).clamp(0.0, 255.0) as u8
+            };
+            (
+                interp(r00, r10, r01, r11),
+                interp(g00, g10, g01, g11),
+                interp(b00, b10, b01, b11),
+            )
+        });
+    }
+
+    #[test]
+    fn debug_colorbook_fg_scaler_candidates() {
+        let ref_path = std::path::Path::new("/tmp/rdjvu_debug/colorbook_p1_fg.ppm");
+        if !ref_path.exists() {
+            return;
+        }
+        let expected = std::fs::read(ref_path).unwrap();
+        let data = std::fs::read(assets_path().join("colorbook.djvu")).unwrap();
+        let doc = Document::parse(&data).unwrap();
+        let page = doc.page(0).unwrap();
+        let mask = page.decode_mask().unwrap().unwrap();
+        let fg = page.decode_foreground().unwrap().unwrap();
+        let w = page.info.width as u32;
+        let h = page.info.height as u32;
+
+        let compare = |name: &str, sample: &dyn Fn(u32, u32) -> (u8, u8, u8)| {
+            let mut out = Pixmap::white(w, h);
+            let mw = mask.width.min(w);
+            let mh = mask.height.min(h);
+            for y in 0..mh {
+                for x in 0..mw {
+                    if mask.get(x, y) {
+                        let (r, g, b) = sample(x, y);
+                        out.set_rgb(x, y, r, g, b);
+                    }
+                }
+            }
+            let actual = out.to_ppm();
+            let header_end = actual.iter().position(|&b| b == b'\n').unwrap() + 1;
+            let header_end = header_end + actual[header_end..].iter().position(|&b| b == b'\n').unwrap() + 1;
+            let header_end = header_end + actual[header_end..].iter().position(|&b| b == b'\n').unwrap() + 1;
+            let a = &actual[header_end..];
+            let e = &expected[header_end..];
+            let px = (a.len().min(e.len())) / 3;
+            let mut diff_px = 0usize;
+            for p in 0..px {
+                let i = p * 3;
+                if a[i] != e[i] || a[i + 1] != e[i + 1] || a[i + 2] != e[i + 2] {
+                    diff_px += 1;
+                }
+            }
+            eprintln!("colorbook fg scaler {} mismatch_px={}", name, diff_px);
+        };
+
+        let scale = (w as f64 / fg.width as f64).round().max(1.0) as u32;
+        compare("nearest_round_scale", &|x, y| {
+            let sx = (x / scale).min(fg.width - 1);
+            let sy = (y / scale).min(fg.height - 1);
+            fg.get_rgb(sx, sy)
+        });
+        compare("bilinear_round_scale", &|x, y| sample_layer_bilinear(&fg, x, y, scale));
+
+        compare("nearest_true_dims", &|x, y| {
+            let sx = ((x as u64 * fg.width as u64) / w as u64) as u32;
+            let sy = ((y as u64 * fg.height as u64) / h as u64) as u32;
+            fg.get_rgb(sx.min(fg.width - 1), sy.min(fg.height - 1))
+        });
+
+        compare("bilinear_true_dims", &|x, y| {
+            let sw = fg.width as f64;
+            let sh = fg.height as f64;
+            let dw = w as f64;
+            let dh = h as f64;
+            let sx = ((x as f64 + 0.5) * sw / dw - 0.5).clamp(0.0, sw - 1.0);
+            let sy = ((y as f64 + 0.5) * sh / dh - 0.5).clamp(0.0, sh - 1.0);
+            let sx0 = sx as u32;
+            let sy0 = sy as u32;
+            let sx1 = (sx0 + 1).min(fg.width - 1);
+            let sy1 = (sy0 + 1).min(fg.height - 1);
+            let fx = sx - sx0 as f64;
+            let fy = sy - sy0 as f64;
+            let (r00, g00, b00) = fg.get_rgb(sx0, sy0);
+            let (r10, g10, b10) = fg.get_rgb(sx1, sy0);
+            let (r01, g01, b01) = fg.get_rgb(sx0, sy1);
+            let (r11, g11, b11) = fg.get_rgb(sx1, sy1);
+            let interp = |v00: u8, v10: u8, v01: u8, v11: u8| -> u8 {
+                let v = v00 as f64 * (1.0 - fx) * (1.0 - fy)
+                    + v10 as f64 * fx * (1.0 - fy)
+                    + v01 as f64 * (1.0 - fx) * fy
+                    + v11 as f64 * fx * fy;
+                (v + 0.5).clamp(0.0, 255.0) as u8
             };
             (
                 interp(r00, r10, r01, r11),
