@@ -397,45 +397,43 @@ fn inverse_wavelet_transform(bm: &mut Bytemap, width: usize, height: usize, subs
 
             // Prediction (odd samples)
             k = 1;
-            if k <= kmax {
-                prev1 = bm.get((k - 1) << s_degree, i);
+            prev1 = bm.get((k - 1) << s_degree, i);
+            if k + 1 <= kmax {
+                next1 = bm.get((k + 1) << s_degree, i);
+                bm.add(k << s_degree, i, (prev1 + next1 + 1) >> 1);
+            } else {
+                bm.add(k << s_degree, i, prev1);
+            }
+
+            if border >= 3 {
+                next3 = bm.get((k + 3) << s_degree, i);
+            }
+
+            k = 3;
+            while k <= border {
+                prev3 = prev1;
+                prev1 = next1;
+                next1 = next3;
+                next3 = bm.get((k + 3) << s_degree, i);
+                let a = prev1 + next1;
+                bm.add(
+                    k << s_degree,
+                    i,
+                    ((a << 3) + a - (prev3 + next3) + 8) >> 4,
+                );
+                k += 2;
+            }
+
+            while k <= kmax {
+                prev1 = next1;
+                next1 = next3;
+                next3 = 0;
                 if k + 1 <= kmax {
-                    next1 = bm.get((k + 1) << s_degree, i);
                     bm.add(k << s_degree, i, (prev1 + next1 + 1) >> 1);
                 } else {
                     bm.add(k << s_degree, i, prev1);
                 }
-
-                if border >= 3 {
-                    next3 = bm.get((k + 3) << s_degree, i);
-                }
-
-                k = 3;
-                while k <= border {
-                    prev3 = prev1;
-                    prev1 = next1;
-                    next1 = next3;
-                    next3 = bm.get((k + 3) << s_degree, i);
-                    let a = prev1 + next1;
-                    bm.add(
-                        k << s_degree,
-                        i,
-                        ((a << 3) + a - (prev3 + next3) + 8) >> 4,
-                    );
-                    k += 2;
-                }
-
-                while k <= kmax {
-                    prev1 = next1;
-                    next1 = next3;
-                    next3 = 0;
-                    if k + 1 <= kmax {
-                        bm.add(k << s_degree, i, (prev1 + next1 + 1) >> 1);
-                    } else {
-                        bm.add(k << s_degree, i, prev1);
-                    }
-                    k += 2;
-                }
+                k += 2;
             }
         }
 
@@ -462,45 +460,43 @@ fn inverse_wavelet_transform(bm: &mut Bytemap, width: usize, height: usize, subs
 
             // Prediction (odd samples)
             k = 1;
-            if k <= kmax {
-                prev1 = bm.get(i, (k - 1) << s_degree);
+            prev1 = bm.get(i, (k - 1) << s_degree);
+            if k + 1 <= kmax {
+                next1 = bm.get(i, (k + 1) << s_degree);
+                bm.add(i, k << s_degree, (prev1 + next1 + 1) >> 1);
+            } else {
+                bm.add(i, k << s_degree, prev1);
+            }
+
+            if border >= 3 {
+                next3 = bm.get(i, (k + 3) << s_degree);
+            }
+
+            k = 3;
+            while k <= border {
+                prev3 = prev1;
+                prev1 = next1;
+                next1 = next3;
+                next3 = bm.get(i, (k + 3) << s_degree);
+                let a = prev1 + next1;
+                bm.add(
+                    i,
+                    k << s_degree,
+                    ((a << 3) + a - (prev3 + next3) + 8) >> 4,
+                );
+                k += 2;
+            }
+
+            while k <= kmax {
+                prev1 = next1;
+                next1 = next3;
+                next3 = 0;
                 if k + 1 <= kmax {
-                    next1 = bm.get(i, (k + 1) << s_degree);
                     bm.add(i, k << s_degree, (prev1 + next1 + 1) >> 1);
                 } else {
                     bm.add(i, k << s_degree, prev1);
                 }
-
-                if border >= 3 {
-                    next3 = bm.get(i, (k + 3) << s_degree);
-                }
-
-                k = 3;
-                while k <= border {
-                    prev3 = prev1;
-                    prev1 = next1;
-                    next1 = next3;
-                    next3 = bm.get(i, (k + 3) << s_degree);
-                    let a = prev1 + next1;
-                    bm.add(
-                        i,
-                        k << s_degree,
-                        ((a << 3) + a - (prev3 + next3) + 8) >> 4,
-                    );
-                    k += 2;
-                }
-
-                while k <= kmax {
-                    prev1 = next1;
-                    next1 = next3;
-                    next3 = 0;
-                    if k + 1 <= kmax {
-                        bm.add(i, k << s_degree, (prev1 + next1 + 1) >> 1);
-                    } else {
-                        bm.add(i, k << s_degree, prev1);
-                    }
-                    k += 2;
-                }
+                k += 2;
             }
         }
 

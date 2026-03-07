@@ -614,4 +614,53 @@ mod tests {
         let p = doc.page(0).unwrap();
         assert_eq!(p.info.dpi, 300);
     }
+
+    #[test]
+    fn debug_bg_lowres_vs_ddjvu() {
+        let cases = [
+            ("carte.djvu", 0usize, "/tmp/rdjvu_debug/carte_bg_sub3.ppm"),
+            ("colorbook.djvu", 0usize, "/tmp/rdjvu_debug/colorbook_p1_bg_sub3.ppm"),
+            ("navm_fgbz.djvu", 3usize, "/tmp/rdjvu_debug/navm_p4_bg_sub3.ppm"),
+        ];
+        for (file, page_idx, ref_file) in cases {
+            let ref_path = std::path::Path::new(ref_file);
+            if !ref_path.exists() {
+                continue;
+            }
+            let data = std::fs::read(assets_path().join(file)).unwrap();
+            let doc = Document::parse(&data).unwrap();
+            let page = doc.page(page_idx).unwrap();
+            let bg = page.decode_background().unwrap().unwrap();
+            let actual = bg.to_ppm();
+            let expected = std::fs::read(ref_path).unwrap();
+            let header_end = actual.iter().position(|&b| b == b'\n').unwrap() + 1;
+            let header_end = header_end + actual[header_end..].iter().position(|&b| b == b'\n').unwrap() + 1;
+            let header_end = header_end + actual[header_end..].iter().position(|&b| b == b'\n').unwrap() + 1;
+            let a = &actual[header_end..];
+            let e = &expected[header_end..];
+            let mut diff_px = 0usize;
+            let mut abs = [0u64; 3];
+            let px = (a.len().min(e.len())) / 3;
+            for p in 0..px {
+                let i = p * 3;
+                if a[i] != e[i] || a[i + 1] != e[i + 1] || a[i + 2] != e[i + 2] {
+                    diff_px += 1;
+                }
+                abs[0] += (a[i] as i32 - e[i] as i32).unsigned_abs() as u64;
+                abs[1] += (a[i + 1] as i32 - e[i + 1] as i32).unsigned_abs() as u64;
+                abs[2] += (a[i + 2] as i32 - e[i + 2] as i32).unsigned_abs() as u64;
+            }
+            eprintln!(
+                "{} p{} bg-lowres mismatch_px={} mean_abs=({:.3},{:.3},{:.3}) dims_a={} dims_e={}",
+                file,
+                page_idx + 1,
+                diff_px,
+                abs[0] as f64 / px as f64,
+                abs[1] as f64 / px as f64,
+                abs[2] as f64 / px as f64,
+                a.len() / 3,
+                e.len() / 3
+            );
+        }
+    }
 }
