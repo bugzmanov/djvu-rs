@@ -14,6 +14,17 @@ name = "rdjvu-core"
 version = "0.1.0"
 
 [[package]]
+name = "rdjvu-document"
+version = "0.1.0"
+dependencies = [
+ "rdjvu-bzz",
+ "rdjvu-core",
+ "rdjvu-iff",
+ "rdjvu-iw44",
+ "rdjvu-jb2",
+]
+
+[[package]]
 name = "rdjvu-iff"
 version = "0.1.0"
 dependencies = [

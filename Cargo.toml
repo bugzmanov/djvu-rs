@@ -1,6 +1,7 @@
 [workspace]
 members = ["rdjvu-bzz",
     "rdjvu-core",
+    "rdjvu-document",
     "rdjvu-iff", "rdjvu-iw44", "rdjvu-jb2", "rdjvu-zp",
 ]
 resolver = "2"
