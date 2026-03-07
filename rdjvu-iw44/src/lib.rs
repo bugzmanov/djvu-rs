@@ -750,6 +750,177 @@ mod tests {
         }
     }
 
+    fn get_bytemap_custom(
+        dec: &IWDecoder,
+        subsample: usize,
+        even_bias: i32,
+        pred_bias: i32,
+        mid_bias: i32,
+    ) -> Bytemap {
+        let full_width = ((dec.width + 31) / 32) * 32;
+        let full_height = ((dec.height + 31) / 32) * 32;
+        let block_rows = (dec.height + 31) / 32;
+        let mut bm = Bytemap {
+            data: vec![0i16; full_width * full_height],
+            stride: full_width,
+        };
+
+        for r in 0..block_rows {
+            for c in 0..dec.block_cols {
+                let block = &dec.blocks[r * dec.block_cols + c];
+                let row_base = r << 5;
+                let col_base = c << 5;
+                for i in 0..1024 {
+                    let row = ZIGZAG_ROW[i] as usize + row_base;
+                    let col = ZIGZAG_COL[i] as usize + col_base;
+                    bm.data[row * full_width + col] = block[i];
+                }
+            }
+        }
+
+        inverse_wavelet_transform_custom(
+            &mut bm,
+            dec.width,
+            dec.height,
+            subsample,
+            even_bias,
+            pred_bias,
+            mid_bias,
+        );
+        bm
+    }
+
+    fn inverse_wavelet_transform_custom(
+        bm: &mut Bytemap,
+        width: usize,
+        height: usize,
+        subsample: usize,
+        even_bias: i32,
+        pred_bias: i32,
+        mid_bias: i32,
+    ) {
+        let mut s_degree: u32 = 4;
+        let mut s = 16usize;
+        while s >= subsample {
+            let kmax = (height - 1) >> s_degree;
+            let border = if kmax >= 3 { kmax - 3 } else { 0 };
+            for i in (0..width).step_by(s) {
+                let mut prev1: i32 = 0;
+                let mut next1: i32 = 0;
+                let mut next3: i32 = if 1 > kmax { 0 } else { bm.get(1 << s_degree, i) };
+                let mut prev3: i32;
+                let mut k = 0;
+                while k <= kmax {
+                    prev3 = prev1;
+                    prev1 = next1;
+                    next1 = next3;
+                    next3 = if k + 3 > kmax { 0 } else { bm.get((k + 3) << s_degree, i) };
+                    let a = prev1 + next1;
+                    let c = prev3 + next3;
+                    bm.sub(k << s_degree, i, ((a << 3) + a - c + even_bias) >> 5);
+                    k += 2;
+                }
+
+                k = 1;
+                prev1 = bm.get((k - 1) << s_degree, i);
+                if k + 1 <= kmax {
+                    next1 = bm.get((k + 1) << s_degree, i);
+                    bm.add(k << s_degree, i, (prev1 + next1 + pred_bias) >> 1);
+                } else {
+                    bm.add(k << s_degree, i, prev1);
+                }
+
+                if border >= 3 {
+                    next3 = bm.get((k + 3) << s_degree, i);
+                }
+
+                k = 3;
+                while k <= border {
+                    prev3 = prev1;
+                    prev1 = next1;
+                    next1 = next3;
+                    next3 = bm.get((k + 3) << s_degree, i);
+                    let a = prev1 + next1;
+                    bm.add(k << s_degree, i, ((a << 3) + a - (prev3 + next3) + mid_bias) >> 4);
+                    k += 2;
+                }
+
+                while k <= kmax {
+                    prev1 = next1;
+                    next1 = next3;
+                    next3 = 0;
+                    if k + 1 <= kmax {
+                        bm.add(k << s_degree, i, (prev1 + next1 + pred_bias) >> 1);
+                    } else {
+                        bm.add(k << s_degree, i, prev1);
+                    }
+                    k += 2;
+                }
+            }
+
+            let kmax = (width - 1) >> s_degree;
+            let border = if kmax >= 3 { kmax - 3 } else { 0 };
+            for i in (0..height).step_by(s) {
+                let mut prev1: i32 = 0;
+                let mut next1: i32 = 0;
+                let mut next3: i32 = if 1 > kmax { 0 } else { bm.get(i, 1 << s_degree) };
+                let mut prev3: i32;
+                let mut k = 0;
+                while k <= kmax {
+                    prev3 = prev1;
+                    prev1 = next1;
+                    next1 = next3;
+                    next3 = if k + 3 > kmax { 0 } else { bm.get(i, (k + 3) << s_degree) };
+                    let a = prev1 + next1;
+                    let c = prev3 + next3;
+                    bm.sub(i, k << s_degree, ((a << 3) + a - c + even_bias) >> 5);
+                    k += 2;
+                }
+
+                k = 1;
+                prev1 = bm.get(i, (k - 1) << s_degree);
+                if k + 1 <= kmax {
+                    next1 = bm.get(i, (k + 1) << s_degree);
+                    bm.add(i, k << s_degree, (prev1 + next1 + pred_bias) >> 1);
+                } else {
+                    bm.add(i, k << s_degree, prev1);
+                }
+
+                if border >= 3 {
+                    next3 = bm.get(i, (k + 3) << s_degree);
+                }
+
+                k = 3;
+                while k <= border {
+                    prev3 = prev1;
+                    prev1 = next1;
+                    next1 = next3;
+                    next3 = bm.get(i, (k + 3) << s_degree);
+                    let a = prev1 + next1;
+                    bm.add(i, k << s_degree, ((a << 3) + a - (prev3 + next3) + mid_bias) >> 4);
+                    k += 2;
+                }
+
+                while k <= kmax {
+                    prev1 = next1;
+                    next1 = next3;
+                    next3 = 0;
+                    if k + 1 <= kmax {
+                        bm.add(i, k << s_degree, (prev1 + next1 + pred_bias) >> 1);
+                    } else {
+                        bm.add(i, k << s_degree, prev1);
+                    }
+                    k += 2;
+                }
+            }
+
+            s >>= 1;
+            if s_degree > 0 {
+                s_degree -= 1;
+            }
+        }
+    }
+
     #[test]
     fn zigzag_table_spot_checks() {
         assert_eq!(ZIGZAG_ROW[0], 0);
@@ -814,5 +985,252 @@ mod tests {
 
         let pm = img.to_pixmap().unwrap();
         assert_ppm_match(&pm.to_ppm(), "chicken_bg.ppm");
+    }
+
+    #[test]
+    fn debug_carte_bg_color_candidates() {
+        let ref_path = std::path::Path::new("/tmp/rdjvu_debug/carte_bg_sub3.ppm");
+        if !ref_path.exists() {
+            return;
+        }
+
+        let data = std::fs::read(assets_path().join("carte.djvu")).unwrap();
+        let file = rdjvu_iff::parse(&data).unwrap();
+        let chunks = extract_bg44_chunks(&file);
+        let mut img = IW44Image::new();
+        for c in &chunks {
+            img.decode_chunk(c).unwrap();
+        }
+
+        let y_bm = img.y_codec.as_ref().unwrap().get_bytemap(1);
+        let cb_bm = img.cb_codec.as_ref().unwrap().get_bytemap(1);
+        let cr_bm = img.cr_codec.as_ref().unwrap().get_bytemap(1);
+        let w = img.width as u32;
+        let h = img.height as u32;
+        let expected = std::fs::read(ref_path).unwrap();
+
+        let compare = |name: &str, build: &dyn Fn() -> Pixmap| {
+            let actual = build().to_ppm();
+            let header_end = find_ppm_data_start(&actual);
+            let a = &actual[header_end..];
+            let e = &expected[header_end..];
+            let px = (a.len().min(e.len())) / 3;
+            let mut diff_px = 0usize;
+            for p in 0..px {
+                let i = p * 3;
+                if a[i] != e[i] || a[i + 1] != e[i + 1] || a[i + 2] != e[i + 2] {
+                    diff_px += 1;
+                }
+            }
+            eprintln!("carte bg color {} mismatch_px={}", name, diff_px);
+        };
+
+        let norm = |val: i16, offset: i32| -> i32 {
+            let v = ((val as i32) + offset) >> 6;
+            v.clamp(-128, 127)
+        };
+
+        let build_pm = |y_off: i32, c_off: i32, mode: &str| -> Pixmap {
+            let mut pm = Pixmap::new(w, h, 0, 0, 0, 255);
+            for row in 0..h {
+                let out_row = h - 1 - row;
+                for col in 0..w {
+                    let idx = row as usize * y_bm.stride + col as usize;
+                    let y = norm(y_bm.data[idx], y_off);
+                    let b = norm(cb_bm.data[idx], c_off);
+                    let r = norm(cr_bm.data[idx], c_off);
+                    let (t2, t3, green) = match mode {
+                        "shift" => {
+                            let t2 = r + (r >> 1);
+                            let t3 = y + 128 - (b >> 2);
+                            let green = t3 - (t2 >> 1);
+                            (t2, t3, green)
+                        }
+                        "trunc_div" => {
+                            let t2 = r + r / 2;
+                            let t3 = y + 128 - b / 4;
+                            let green = t3 - t2 / 2;
+                            (t2, t3, green)
+                        }
+                        "mixed_bdiv" => {
+                            let t2 = r + (r >> 1);
+                            let t3 = y + 128 - b / 4;
+                            let green = t3 - (t2 >> 1);
+                            (t2, t3, green)
+                        }
+                        "mixed_gdiv" => {
+                            let t2 = r + (r >> 1);
+                            let t3 = y + 128 - (b >> 2);
+                            let green = t3 - t2 / 2;
+                            (t2, t3, green)
+                        }
+                        _ => unreachable!(),
+                    };
+
+                    let red = (y + 128 + t2).clamp(0, 255) as u8;
+                    let blue = (t3 + (b << 1)).clamp(0, 255) as u8;
+                    pm.set_rgb(col, out_row, red, green.clamp(0, 255) as u8, blue);
+                }
+            }
+            pm
+        };
+
+        compare("current_shift", &|| build_pm(32, 32, "shift"));
+        compare("trunc_div", &|| build_pm(32, 32, "trunc_div"));
+        compare("mixed_bdiv", &|| build_pm(32, 32, "mixed_bdiv"));
+        compare("mixed_gdiv", &|| build_pm(32, 32, "mixed_gdiv"));
+        compare("chroma_off31_shift", &|| build_pm(32, 31, "shift"));
+        compare("chroma_off33_shift", &|| build_pm(32, 33, "shift"));
+        compare("chroma_off31_trunc_div", &|| build_pm(32, 31, "trunc_div"));
+        compare("chroma_off33_trunc_div", &|| build_pm(32, 33, "trunc_div"));
+    }
+
+    #[test]
+    fn debug_carte_bg_wavelet_rounding_candidates() {
+        let ref_path = std::path::Path::new("/tmp/rdjvu_debug/carte_bg_sub3.ppm");
+        if !ref_path.exists() {
+            return;
+        }
+
+        let data = std::fs::read(assets_path().join("carte.djvu")).unwrap();
+        let file = rdjvu_iff::parse(&data).unwrap();
+        let chunks = extract_bg44_chunks(&file);
+        let mut img = IW44Image::new();
+        for c in &chunks {
+            img.decode_chunk(c).unwrap();
+        }
+
+        let y_dec = img.y_codec.as_ref().unwrap();
+        let cb_dec = img.cb_codec.as_ref().unwrap();
+        let cr_dec = img.cr_codec.as_ref().unwrap();
+        let w = img.width as u32;
+        let h = img.height as u32;
+        let expected = std::fs::read(ref_path).unwrap();
+
+        let compare = |even_bias: i32, pred_bias: i32, mid_bias: i32| {
+            let y_bm = get_bytemap_custom(y_dec, 1, even_bias, pred_bias, mid_bias);
+            let cb_bm = get_bytemap_custom(cb_dec, 1, even_bias, pred_bias, mid_bias);
+            let cr_bm = get_bytemap_custom(cr_dec, 1, even_bias, pred_bias, mid_bias);
+            let mut pm = Pixmap::new(w, h, 0, 0, 0, 255);
+            for row in 0..h {
+                let out_row = h - 1 - row;
+                for col in 0..w {
+                    let idx = row as usize * y_bm.stride + col as usize;
+                    let y = normalize(y_bm.data[idx]);
+                    let b = normalize(cb_bm.data[idx]);
+                    let r = normalize(cr_bm.data[idx]);
+                    let t2 = r + (r >> 1);
+                    let t3 = y + 128 - (b >> 2);
+                    let red = (y + 128 + t2).clamp(0, 255) as u8;
+                    let green = (t3 - (t2 >> 1)).clamp(0, 255) as u8;
+                    let blue = (t3 + (b << 1)).clamp(0, 255) as u8;
+                    pm.set_rgb(col, out_row, red, green, blue);
+                }
+            }
+
+            let actual = pm.to_ppm();
+            let header_end = find_ppm_data_start(&actual);
+            let a = &actual[header_end..];
+            let e = &expected[header_end..];
+            let px = (a.len().min(e.len())) / 3;
+            let mut diff_px = 0usize;
+            for p in 0..px {
+                let i = p * 3;
+                if a[i] != e[i] || a[i + 1] != e[i + 1] || a[i + 2] != e[i + 2] {
+                    diff_px += 1;
+                }
+            }
+            eprintln!(
+                "carte bg wavelet even={} pred={} mid={} mismatch_px={}",
+                even_bias, pred_bias, mid_bias, diff_px
+            );
+        };
+
+        for even_bias in [15, 16, 17] {
+            for pred_bias in [0, 1] {
+                for mid_bias in [7, 8, 9] {
+                    compare(even_bias, pred_bias, mid_bias);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn debug_bg_header_profiles() {
+        for file in ["carte.djvu", "colorbook.djvu", "navm_fgbz.djvu", "chicken.djvu"] {
+            let data = std::fs::read(assets_path().join(file)).unwrap();
+            let parsed = rdjvu_iff::parse(&data).unwrap();
+            let chunks = extract_bg44_chunks(&parsed);
+            if chunks.is_empty() {
+                continue;
+            }
+            let mut img = IW44Image::new();
+            img.decode_chunk(chunks[0]).unwrap();
+            eprintln!(
+                "{} bg44 chunks={} first: {}x{} color={} delay={} cslice={}",
+                file,
+                chunks.len(),
+                img.width,
+                img.height,
+                img.is_color,
+                img.delay,
+                img.cslice
+            );
+            for (idx, chunk) in chunks.iter().enumerate() {
+                let serial = chunk[0];
+                let slices = chunk[1];
+                eprintln!(
+                    "  chunk {} serial={} slices={} len={}",
+                    idx,
+                    serial,
+                    slices,
+                    chunk.len()
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn debug_carte_bg_progressive_chunk_mismatch() {
+        let data = std::fs::read(assets_path().join("carte.djvu")).unwrap();
+        let file = rdjvu_iff::parse(&data).unwrap();
+        let chunks = extract_bg44_chunks(&file);
+
+        for nchunks in 1..=chunks.len() {
+            let ref_path = std::path::PathBuf::from(format!("/tmp/rdjvu_debug/carte_bg_{}_ref.ppm", nchunks));
+            if !ref_path.exists() {
+                continue;
+            }
+
+            let mut img = IW44Image::new();
+            for chunk in chunks.iter().take(nchunks) {
+                img.decode_chunk(chunk).unwrap();
+            }
+            let actual = img.to_pixmap().unwrap().to_ppm();
+            let expected = std::fs::read(ref_path).unwrap();
+            let header_end = find_ppm_data_start(&actual);
+            let a = &actual[header_end..];
+            let e = &expected[header_end..];
+            let px = (a.len().min(e.len())) / 3;
+            let mut diff_px = 0usize;
+            let mut abs = [0u64; 3];
+            for p in 0..px {
+                let i = p * 3;
+                if a[i] != e[i] || a[i + 1] != e[i + 1] || a[i + 2] != e[i + 2] {
+                    diff_px += 1;
+                }
+                abs[0] += (a[i] as i32 - e[i] as i32).unsigned_abs() as u64;
+                abs[1] += (a[i + 1] as i32 - e[i + 1] as i32).unsigned_abs() as u64;
+                abs[2] += (a[i + 2] as i32 - e[i + 2] as i32).unsigned_abs() as u64;
+            }
+            eprintln!(
+                "carte bg chunks={} mismatch_px={} mean_abs=({:.4},{:.4},{:.4})",
+                nchunks,
+                diff_px,
+                abs[0] as f64 / px as f64,
+                abs[1] as f64 / px as f64,
+                abs[2] as f64 / px as f64
+            );
+        }
     }
 }

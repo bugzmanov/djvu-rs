@@ -43,6 +43,19 @@ impl Pixmap {
         (self.data[idx], self.data[idx + 1], self.data[idx + 2])
     }
 
+    /// Extract RGB pixel data (3 bytes per pixel), discarding alpha.
+    pub fn to_rgb(&self) -> Vec<u8> {
+        let pixel_count = self.width as usize * self.height as usize;
+        let mut out = Vec::with_capacity(pixel_count * 3);
+        for i in 0..pixel_count {
+            let base = i * 4;
+            out.push(self.data[base]);
+            out.push(self.data[base + 1]);
+            out.push(self.data[base + 2]);
+        }
+        out
+    }
+
     /// Encode as PPM (binary, P6 format).
     /// This is the format produced by `ddjvu -format=ppm`.
     /// Discards alpha channel.

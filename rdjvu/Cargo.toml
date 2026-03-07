@@ -1,0 +1,14 @@
+[package]
+name = "rdjvu"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+description = "Pure Rust DjVu renderer"
+
+[dependencies]
+rdjvu-core = { path = "../rdjvu-core" }
+rdjvu-document = { path = "../rdjvu-document" }
+rdjvu-render = { path = "../rdjvu-render" }
+
+[dev-dependencies]
+rdjvu-document = { path = "../rdjvu-document" }
