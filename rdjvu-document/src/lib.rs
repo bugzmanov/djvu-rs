@@ -249,25 +249,32 @@ impl<'a> Page<'a> {
     }
 
     fn resolve_shared_dict(&self) -> Result<Option<JB2Dict>, Error> {
-        let incl = match self.form.find_first(b"INCL") {
-            Some(c) => c,
-            None => return Ok(None),
-        };
+        // First check for INCL → external DJVI component with Djbz
+        if let Some(incl) = self.form.find_first(b"INCL") {
+            let ref_id = std::str::from_utf8(incl.data())
+                .map_err(|_| Error::FormatError("invalid INCL UTF-8".into()))?
+                .trim_end_matches('\0')
+                .trim();
 
-        let ref_id = std::str::from_utf8(incl.data())
-            .map_err(|_| Error::FormatError("invalid INCL UTF-8".into()))?
-            .trim_end_matches('\0')
-            .trim();
+            let shared_form = self.doc.resolve_incl(ref_id)?;
+            let djbz = match shared_form.find_first(b"Djbz") {
+                Some(c) => c.data(),
+                None => return Err(Error::MissingChunk("Djbz in shared component")),
+            };
 
-        let shared_form = self.doc.resolve_incl(ref_id)?;
-        let djbz = match shared_form.find_first(b"Djbz") {
-            Some(c) => c.data(),
-            None => return Err(Error::MissingChunk("Djbz in shared component")),
-        };
+            let dict = rdjvu_jb2::decode_dict(djbz, None)
+                .map_err(|e| Error::FormatError(e.to_string()))?;
+            return Ok(Some(dict));
+        }
 
-        let dict = rdjvu_jb2::decode_dict(djbz, None)
-            .map_err(|e| Error::FormatError(e.to_string()))?;
-        Ok(Some(dict))
+        // Then check for inline Djbz in the same FORM as Sjbz
+        if let Some(djbz) = self.form.find_first(b"Djbz") {
+            let dict = rdjvu_jb2::decode_dict(djbz.data(), None)
+                .map_err(|e| Error::FormatError(e.to_string()))?;
+            return Ok(Some(dict));
+        }
+
+        Ok(None)
     }
 
     fn decode_iw44_layer(&self, chunk_id: &[u8; 4]) -> Result<Option<IW44Image>, Error> {
