@@ -291,4 +291,34 @@ mod tests {
         let decoded = decode(&bzz_data).unwrap();
         assert_eq!(decoded, expected);
     }
+
+    // --- Phase 6.2: Edge case tests ---
+
+    #[test]
+    fn bzz_empty_input() {
+        let result = decode(&[]);
+        assert!(result.is_err() || result.unwrap().is_empty());
+    }
+
+    #[test]
+    fn bzz_single_byte() {
+        // Should not panic on minimal input
+        let _ = decode(&[0x00]);
+    }
+
+    #[test]
+    fn bzz_all_zeros() {
+        let _ = decode(&[0u8; 32]);
+    }
+
+    #[test]
+    fn bzz_all_ones() {
+        let _ = decode(&[0xffu8; 32]);
+    }
+
+    #[test]
+    fn bzz_truncated_header() {
+        // Two bytes — not enough for block size
+        let _ = decode(&[0x42, 0x5a]);
+    }
 }

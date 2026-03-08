@@ -459,8 +459,13 @@ fn decode_inner(data: &[u8], shared_dict: Option<&JB2Dict>, track_blits: bool) -
         }
     }
 
-    // Initialize page bitmap
+    // Cap at ~64M pixels to prevent OOM on malformed input.
+    // Largest known real-world page: 6780x9148 = ~62M pixels.
+    const MAX_PIXELS: usize = 64 * 1024 * 1024;
     let page_size = (image_width * image_height) as usize;
+    if page_size > MAX_PIXELS {
+        return Err("JB2: image dimensions too large");
+    }
     let mut page = vec![0u8; page_size];
     let mut blit_map = if track_blits { Some(vec![-1i32; page_size]) } else { None };
     let mut blit_count: i32 = 0;
@@ -518,6 +523,7 @@ fn decode_inner(data: &[u8], shared_dict: Option<&JB2Dict>, track_blits: bool) -
             }
             4 => {
                 // Matched with refinement: add to dict AND blit
+                if dict.is_empty() { return Err("JB2: dict reference with empty dict"); }
                 let index = decode_num(&mut zp, &mut symbol_index_ctx, 0, dict.len() as i32 - 1) as usize;
                 let wdiff = decode_num(&mut zp, &mut symbol_width_diff_ctx, -262143, 262142);
                 let hdiff = decode_num(&mut zp, &mut symbol_height_diff_ctx, -262143, 262142);
@@ -539,6 +545,7 @@ fn decode_inner(data: &[u8], shared_dict: Option<&JB2Dict>, track_blits: bool) -
             }
             5 => {
                 // Matched with refinement: add to dict only
+                if dict.is_empty() { return Err("JB2: dict reference with empty dict"); }
                 let index = decode_num(&mut zp, &mut symbol_index_ctx, 0, dict.len() as i32 - 1) as usize;
                 let wdiff = decode_num(&mut zp, &mut symbol_width_diff_ctx, -262143, 262142);
                 let hdiff = decode_num(&mut zp, &mut symbol_height_diff_ctx, -262143, 262142);
@@ -549,6 +556,7 @@ fn decode_inner(data: &[u8], shared_dict: Option<&JB2Dict>, track_blits: bool) -
             }
             6 => {
                 // Matched with refinement: blit only
+                if dict.is_empty() { return Err("JB2: dict reference with empty dict"); }
                 let index = decode_num(&mut zp, &mut symbol_index_ctx, 0, dict.len() as i32 - 1) as usize;
                 let wdiff = decode_num(&mut zp, &mut symbol_width_diff_ctx, -262143, 262142);
                 let hdiff = decode_num(&mut zp, &mut symbol_height_diff_ctx, -262143, 262142);
@@ -568,6 +576,7 @@ fn decode_inner(data: &[u8], shared_dict: Option<&JB2Dict>, track_blits: bool) -
             }
             7 => {
                 // Matched copy without refinement: blit
+                if dict.is_empty() { return Err("JB2: dict reference with empty dict"); }
                 let index = decode_num(&mut zp, &mut symbol_index_ctx, 0, dict.len() as i32 - 1) as usize;
                 let bm = &dict[index];
                 let bm_w = bm.width;
@@ -681,6 +690,7 @@ pub fn decode_dict(data: &[u8], inherited: Option<&JB2Dict>) -> Result<JB2Dict, 
                 dict.push(bm.remove_empty_edges());
             }
             5 => {
+                if dict.is_empty() { return Err("JB2: dict reference with empty dict"); }
                 let index = decode_num(&mut zp, &mut symbol_index_ctx, 0, dict.len() as i32 - 1) as usize;
                 let wdiff = decode_num(&mut zp, &mut symbol_width_diff_ctx, -262143, 262142);
                 let hdiff = decode_num(&mut zp, &mut symbol_height_diff_ctx, -262143, 262142);
@@ -899,5 +909,44 @@ mod tests {
         let expected_pbm = std::fs::read(golden_path().join("navm_fgbz_p1_mask.pbm")).unwrap();
         assert_eq!(actual_pbm.len(), expected_pbm.len(), "navm_fgbz_p1_mask size mismatch");
         assert_eq!(actual_pbm, expected_pbm, "navm_fgbz_p1_mask pixel mismatch");
+    }
+
+    // --- Phase 6.2: Edge case tests ---
+
+    #[test]
+    fn jb2_empty_input() {
+        let _ = decode(&[], None);
+    }
+
+    #[test]
+    fn jb2_single_byte() {
+        let _ = decode(&[0x00], None);
+    }
+
+    #[test]
+    fn jb2_all_zeros() {
+        let _ = decode(&[0u8; 64], None);
+    }
+
+    #[test]
+    fn jb2_dict_empty_input() {
+        let _ = decode_dict(&[], None);
+    }
+
+    #[test]
+    fn jb2_dict_truncated() {
+        let _ = decode_dict(&[0u8; 8], None);
+    }
+
+    #[test]
+    fn jb2_fuzz_crash_regression() {
+        // Crash artifact from fuzzing — must not panic
+        let data = std::fs::read(
+            std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                .parent().unwrap()
+                .join("fuzz/artifacts/fuzz_jb2/crash-300468aea78aa31479c595355e2e315798de347a")
+        ).unwrap();
+        let _ = decode(&data, None);
+        let _ = decode_dict(&data, None);
     }
 }

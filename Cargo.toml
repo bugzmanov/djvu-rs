@@ -5,4 +5,5 @@ members = ["rdjvu",
     "rdjvu-document",
     "rdjvu-iff", "rdjvu-iw44", "rdjvu-jb2", "rdjvu-render", "rdjvu-zp",
 ]
+exclude = ["fuzz"]
 resolver = "2"

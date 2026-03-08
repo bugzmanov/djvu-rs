@@ -587,6 +587,15 @@ impl IW44Image {
             let delay = if minor >= 2 { delay_byte & 127 } else { 0 };
             let chroma_half = minor >= 2 && (delay_byte & 0x80) == 0;
 
+            if w == 0 || h == 0 {
+                return Err("IW44: zero dimension");
+            }
+            // Cap total pixels to prevent OOM on malformed input (~256M pixels)
+            let pixels = w as u64 * h as u64;
+            if pixels > 256 * 1024 * 1024 {
+                return Err("IW44: image dimensions too large");
+            }
+
             self.width = w;
             self.height = h;
             self.is_color = !is_grayscale;
@@ -2078,6 +2087,57 @@ mod tests {
                     tag, name, diff_px, diff_bytes
                 );
             }
+        }
+    }
+
+    // --- Phase 6.2: Edge case tests ---
+
+    #[test]
+    fn iw44_empty_input() {
+        let mut img = IW44Image::new();
+        assert!(img.decode_chunk(&[]).is_err());
+    }
+
+    #[test]
+    fn iw44_single_byte() {
+        let mut img = IW44Image::new();
+        let _ = img.decode_chunk(&[0x00]);
+    }
+
+    #[test]
+    fn iw44_truncated_header() {
+        let mut img = IW44Image::new();
+        // Only 3 bytes — not enough for a valid IW44 chunk header
+        let _ = img.decode_chunk(&[0x00, 0x01, 0x02]);
+    }
+
+    #[test]
+    fn iw44_to_pixmap_before_decode() {
+        // No chunks decoded yet — should produce an empty or minimal image
+        let img = IW44Image::new();
+        let result = img.to_pixmap();
+        assert!(result.is_err() || {
+            let pm = result.unwrap();
+            pm.width == 0 || pm.height == 0
+        });
+    }
+
+    #[test]
+    fn iw44_all_zeros() {
+        let mut img = IW44Image::new();
+        let _ = img.decode_chunk(&[0u8; 64]);
+    }
+
+    #[test]
+    fn iw44_fuzz_crash_regression() {
+        let data = std::fs::read(
+            std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                .parent().unwrap()
+                .join("fuzz/artifacts/fuzz_iw44/crash-cd05b0f41ddae1e44952cccf5e2b2ae825908e5e")
+        ).unwrap();
+        let mut img = IW44Image::new();
+        if img.decode_chunk(&data).is_ok() {
+            let _ = img.to_pixmap();
         }
     }
 }

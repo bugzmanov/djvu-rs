@@ -680,4 +680,57 @@ mod tests {
             );
         }
     }
+
+    // --- Phase 6.2: Edge case tests ---
+
+    #[test]
+    fn document_empty_input() {
+        assert!(Document::parse(&[]).is_err());
+    }
+
+    #[test]
+    fn document_truncated_file() {
+        // Just the AT&T magic, not enough for a FORM
+        assert!(Document::parse(b"AT&T").is_err());
+    }
+
+    #[test]
+    fn document_missing_info_chunk() {
+        // Valid IFF structure but no INFO chunk — page should have sensible error
+        let mut data = b"AT&TFORM".to_vec();
+        let form_size = 4 + 4 + 4 + 4; // secondary + chunk_id + size + data(4)
+        data.extend_from_slice(&(form_size as u32).to_be_bytes());
+        data.extend_from_slice(b"DJVU");
+        data.extend_from_slice(b"Sjbz");
+        data.extend_from_slice(&4u32.to_be_bytes());
+        data.extend_from_slice(&[0u8; 4]);
+        let result = Document::parse(&data);
+        // Should either fail to parse or fail when accessing page info
+        match result {
+            Err(_) => {} // expected
+            Ok(doc) => {
+                assert!(doc.page(0).is_err());
+            }
+        }
+    }
+
+    #[test]
+    fn document_page_out_of_bounds() {
+        let data = std::fs::read(assets_path().join("boy_jb2.djvu")).unwrap();
+        let doc = Document::parse(&data).unwrap();
+        assert_eq!(doc.page_count(), 1);
+        assert!(doc.page(1).is_err());
+        assert!(doc.page(100).is_err());
+    }
+
+    #[test]
+    fn document_missing_optional_chunks() {
+        // boy_jb2.djvu has no BG44 or FG44 — decode should return None
+        let data = std::fs::read(assets_path().join("boy_jb2.djvu")).unwrap();
+        let doc = Document::parse(&data).unwrap();
+        let page = doc.page(0).unwrap();
+        assert!(page.decode_background().unwrap().is_none());
+        assert!(page.decode_foreground().unwrap().is_none());
+        assert!(!page.has_palette());
+    }
 }

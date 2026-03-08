@@ -2,3 +2,6 @@
 /references
 /docs
 CLAUDE.md
+fuzz/target/
+fuzz/artifacts/
+fuzz/corpus/

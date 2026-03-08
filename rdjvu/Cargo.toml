@@ -12,3 +12,4 @@ rdjvu-render = { path = "../rdjvu-render" }
 
 [dev-dependencies]
 rdjvu-document = { path = "../rdjvu-document" }
+rdjvu-iff = { path = "../rdjvu-iff" }

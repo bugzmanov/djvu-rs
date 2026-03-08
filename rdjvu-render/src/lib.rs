@@ -488,42 +488,67 @@ fn box_downsample_boost(src: &Pixmap, tw: u32, th: u32, boldness: f32) -> Pixmap
         if boldness <= 0.0 || i == 0 || i == 255 {
             return i as u8;
         }
-        // opacity = how dark this pixel is (0.0 = white, 1.0 = black)
         let opacity = 1.0 - i as f32 / 255.0;
-        // Boost: 1 - (1 - opacity)^(1 + boldness)
         let boosted = 1.0 - (1.0 - opacity).powf(1.0 + boldness);
         ((1.0 - boosted) * 255.0 + 0.5).clamp(0.0, 255.0) as u8
     });
 
-    let sw = src.width;
-    let sh = src.height;
+    let sw = src.width as f64;
+    let sh = src.height as f64;
+    let tw_f = tw as f64;
+    let th_f = th as f64;
     let mut out = Pixmap::white(tw, th);
 
     for y in 0..th {
-        let sy0 = (y as u64 * sh as u64 / th as u64) as u32;
-        let sy1 = (((y + 1) as u64 * sh as u64 + th as u64 - 1) / th as u64).min(sh as u64) as u32;
+        // Exact floating-point source rectangle for this output row
+        let fy0 = y as f64 * sh / th_f;
+        let fy1 = (y + 1) as f64 * sh / th_f;
+        let iy0 = fy0.floor() as u32;
+        let iy1 = (fy1.ceil() as u32).min(src.height);
 
         for x in 0..tw {
-            let sx0 = (x as u64 * sw as u64 / tw as u64) as u32;
-            let sx1 = (((x + 1) as u64 * sw as u64 + tw as u64 - 1) / tw as u64).min(sw as u64) as u32;
+            // Exact floating-point source rectangle for this output column
+            let fx0 = x as f64 * sw / tw_f;
+            let fx1 = (x + 1) as f64 * sw / tw_f;
+            let ix0 = fx0.floor() as u32;
+            let ix1 = (fx1.ceil() as u32).min(src.width);
 
-            let count = ((sx1 - sx0) as u32).max(1) * ((sy1 - sy0) as u32).max(1);
-            let mut r_sum = 0u32;
-            let mut g_sum = 0u32;
-            let mut b_sum = 0u32;
+            // Area-weighted sum: pixels partially inside the rect are weighted
+            // by the fraction of their area that overlaps.
+            let mut r_sum = 0.0f64;
+            let mut g_sum = 0.0f64;
+            let mut b_sum = 0.0f64;
+            let mut w_sum = 0.0f64;
 
-            for sy in sy0..sy1 {
-                for sx in sx0..sx1 {
-                    let (r, g, b) = src.get_rgb(sx, sy);
-                    r_sum += r as u32;
-                    g_sum += g as u32;
-                    b_sum += b as u32;
+            for iy in iy0..iy1 {
+                let wy = (iy as f64 + 1.0).min(fy1) - (iy as f64).max(fy0);
+                for ix in ix0..ix1 {
+                    let wx = (ix as f64 + 1.0).min(fx1) - (ix as f64).max(fx0);
+                    let w = wx * wy;
+                    let (r, g, b) = src.get_rgb(ix, iy);
+                    r_sum += r as f64 * w;
+                    g_sum += g as f64 * w;
+                    b_sum += b as f64 * w;
+                    w_sum += w;
                 }
             }
 
-            let r = lut[(r_sum / count) as usize];
-            let g = lut[(g_sum / count) as usize];
-            let b = lut[(b_sum / count) as usize];
+            let r_avg = (r_sum / w_sum + 0.5).clamp(0.0, 255.0) as u8;
+            let g_avg = (g_sum / w_sum + 0.5).clamp(0.0, 255.0) as u8;
+            let b_avg = (b_sum / w_sum + 0.5).clamp(0.0, 255.0) as u8;
+
+            // Only apply boldness to near-white grayscale pixels (text
+            // edges on white background).  Skip colored pixels (photos)
+            // and darker grays (background boxes, already-dark edges).
+            let mn = r_avg.min(g_avg).min(b_avg);
+            let mx = r_avg.max(g_avg).max(b_avg);
+            let is_grayscale = mx - mn < 40;
+            let is_near_white = mn > 220;
+            let (r, g, b) = if is_grayscale && is_near_white {
+                (lut[r_avg as usize], lut[g_avg as usize], lut[b_avg as usize])
+            } else {
+                (r_avg, g_avg, b_avg)
+            };
             out.set_rgb(x, y, r, g, b);
         }
     }

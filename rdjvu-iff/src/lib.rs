@@ -351,4 +351,75 @@ mod tests {
         assert_eq!(sjbz.data().len(), 237);
         assert!(file.root.find_first(b"BG44").is_none());
     }
+
+    // --- Phase 6.2: Edge case tests ---
+
+    #[test]
+    fn empty_input() {
+        assert!(parse(&[]).is_err());
+    }
+
+    #[test]
+    fn too_short_for_magic() {
+        assert!(parse(b"AT").is_err());
+    }
+
+    #[test]
+    fn magic_only_no_form() {
+        assert!(parse(b"AT&T").is_err());
+    }
+
+    #[test]
+    fn truncated_form_header() {
+        // AT&T + "FORM" but missing size
+        assert!(parse(b"AT&TFORM").is_err());
+    }
+
+    #[test]
+    fn truncated_chunk_data() {
+        // Valid header but chunk size exceeds available data
+        let mut data = b"AT&TFORM".to_vec();
+        data.extend_from_slice(&100u32.to_be_bytes()); // size = 100
+        data.extend_from_slice(b"DJVU");               // secondary ID
+        data.extend_from_slice(b"INFO");                // leaf chunk ID
+        data.extend_from_slice(&50u32.to_be_bytes());   // leaf size = 50
+        data.extend_from_slice(&[0u8; 10]);             // only 10 bytes of data
+        assert!(parse(&data).is_err());
+    }
+
+    #[test]
+    fn zero_size_leaf_chunk() {
+        // A valid FORM with a zero-length leaf chunk
+        let mut data = b"AT&TFORM".to_vec();
+        let form_size = 4 + 4 + 4; // secondary_id + leaf_id + leaf_size
+        data.extend_from_slice(&(form_size as u32).to_be_bytes());
+        data.extend_from_slice(b"DJVU");
+        data.extend_from_slice(b"INFO");
+        data.extend_from_slice(&0u32.to_be_bytes()); // zero-length INFO
+        let file = parse(&data).unwrap();
+        let info = file.root.find_first(b"INFO").unwrap();
+        assert_eq!(info.data().len(), 0);
+    }
+
+    #[test]
+    fn unknown_chunk_id_passthrough() {
+        // A FORM containing an unknown chunk type — should parse without error
+        let mut data = b"AT&TFORM".to_vec();
+        let leaf_data = b"hello";
+        let leaf_size = leaf_data.len() as u32;
+        // pad to even
+        let padded = if leaf_size % 2 == 1 { leaf_size + 1 } else { leaf_size };
+        let form_size = 4 + 4 + 4 + padded; // secondary_id + id + size + data
+        data.extend_from_slice(&form_size.to_be_bytes());
+        data.extend_from_slice(b"DJVU");
+        data.extend_from_slice(b"ZZZZ"); // unknown chunk
+        data.extend_from_slice(&leaf_size.to_be_bytes());
+        data.extend_from_slice(leaf_data);
+        if leaf_size % 2 == 1 {
+            data.push(0); // padding byte
+        }
+        let file = parse(&data).unwrap();
+        let zzzz = file.root.find_first(b"ZZZZ").unwrap();
+        assert_eq!(zzzz.data(), b"hello");
+    }
 }
