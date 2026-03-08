@@ -15,9 +15,18 @@
 
 pub use rdjvu_core::{Bitmap, Error, Pixmap};
 
-/// A parsed DjVu document. Owns its data so there are no lifetime parameters.
+/// A parsed DjVu document. Owns its data and the parsed structure.
+///
+/// Parsing happens once at construction time. All subsequent `page()` and
+/// `render()` calls reuse the parsed chunk tree with zero re-parsing overhead.
 pub struct Document {
-    data: Vec<u8>,
+    // SAFETY: `parsed` borrows from `_data`. This is sound because:
+    // 1. `_data` is heap-allocated (`Box<[u8]>`) — its address is stable across moves.
+    // 2. Fields drop in declaration order: `parsed` drops first, releasing borrows
+    //    before `_data` is freed.
+    // 3. `_data` is never mutated after construction.
+    parsed: rdjvu_document::Document<'static>,
+    _data: Box<[u8]>,
 }
 
 impl Document {
@@ -30,26 +39,29 @@ impl Document {
 
     /// Parse a DjVu document from owned bytes.
     pub fn from_bytes(data: Vec<u8>) -> Result<Self, Error> {
-        // Validate that the data parses successfully.
-        let _ = rdjvu_document::Document::parse(&data)?;
-        Ok(Document { data })
+        let data = data.into_boxed_slice();
+        // SAFETY: Extend the borrow lifetime to 'static. Sound because `data` is
+        // heap-allocated, never moved or mutated, and outlives `parsed` (see field
+        // drop order above).
+        let stable_ref: &'static [u8] =
+            unsafe { std::slice::from_raw_parts(data.as_ptr(), data.len()) };
+        let parsed = rdjvu_document::Document::parse(stable_ref)?;
+        Ok(Document { parsed, _data: data })
     }
 
     /// Number of pages.
     pub fn page_count(&self) -> usize {
-        // Safe: validated in constructor.
-        rdjvu_document::Document::parse(&self.data).unwrap().page_count()
+        self.parsed.page_count()
     }
 
     /// Access a page by 0-based index.
     pub fn page(&self, index: usize) -> Result<Page<'_>, Error> {
-        let inner = rdjvu_document::Document::parse(&self.data)?;
-        let page = inner.page(index)?;
+        let inner = self.parsed.page(index)?;
         Ok(Page {
-            width: page.info.width,
-            height: page.info.height,
-            dpi: page.info.dpi,
-            rotation: page.info.rotation,
+            width: inner.info.width,
+            height: inner.info.height,
+            dpi: inner.info.dpi,
+            rotation: inner.info.rotation,
             index,
             doc: self,
         })
@@ -100,8 +112,7 @@ impl<'a> Page<'a> {
 
     /// Render the page to an RGBA pixmap at native resolution.
     pub fn render(&self) -> Result<Pixmap, Error> {
-        let inner = rdjvu_document::Document::parse(&self.doc.data)?;
-        let page = inner.page(self.index)?;
+        let page = self.doc.parsed.page(self.index)?;
         rdjvu_render::render(&page)
     }
 
@@ -110,8 +121,7 @@ impl<'a> Page<'a> {
     /// Layers are composited directly at the target resolution —
     /// no intermediate full-size buffer is allocated.
     pub fn render_to_size(&self, width: u32, height: u32) -> Result<Pixmap, Error> {
-        let inner = rdjvu_document::Document::parse(&self.doc.data)?;
-        let page = inner.page(self.index)?;
+        let page = self.doc.parsed.page(self.index)?;
         rdjvu_render::render_to_size(&page, width, height)
     }
 
@@ -126,8 +136,7 @@ impl<'a> Page<'a> {
             rdjvu_document::Rotation::Cw90 | rdjvu_document::Rotation::Cw270 => (h, w),
             _ => (w, h),
         };
-        let inner = rdjvu_document::Document::parse(&self.doc.data)?;
-        let page = inner.page(self.index)?;
+        let page = self.doc.parsed.page(self.index)?;
         rdjvu_render::render_to_size(&page, tw, th)
     }
 }

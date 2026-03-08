@@ -16,14 +16,12 @@ const BAND_BUCKETS: [(usize, usize); 10] = [
 ];
 
 const QUANT_LO_INIT: [u32; 16] = [
-    0x004000, 0x008000, 0x008000, 0x010000, 0x010000,
-    0x010000, 0x010000, 0x010000, 0x010000, 0x010000,
-    0x010000, 0x010000, 0x020000, 0x020000, 0x020000, 0x020000,
+    0x004000, 0x008000, 0x008000, 0x010000, 0x010000, 0x010000, 0x010000, 0x010000, 0x010000,
+    0x010000, 0x010000, 0x010000, 0x020000, 0x020000, 0x020000, 0x020000,
 ];
 
 const QUANT_HI_INIT: [u32; 10] = [
-    0, 0x020000, 0x020000, 0x040000, 0x040000,
-    0x040000, 0x080000, 0x040000, 0x040000, 0x080000,
+    0, 0x020000, 0x020000, 0x040000, 0x040000, 0x040000, 0x080000, 0x040000, 0x040000, 0x080000,
 ];
 
 // Coefficient state flags
@@ -240,7 +238,11 @@ impl IWDecoder {
         let mut step = self.quant_hi[self.curband];
         for i in from..=to {
             if (self.bucketstate[boff] & NEW) != 0 {
-                let shift: usize = if (self.bucketstate[boff] & ACTIVE) != 0 { 8 } else { 0 };
+                let shift: usize = if (self.bucketstate[boff] & ACTIVE) != 0 {
+                    8
+                } else {
+                    0
+                };
                 let mut np: usize = 0;
                 for j in 0..16 {
                     if (self.coeffstate[boff][j] & UNK) != 0 {
@@ -270,7 +272,11 @@ impl IWDecoder {
         }
     }
 
-    fn previously_active_coefficient_decoding_pass(&mut self, zp: &mut ZPDecoder, block_idx: usize) {
+    fn previously_active_coefficient_decoding_pass(
+        &mut self,
+        zp: &mut ZPDecoder,
+        block_idx: usize,
+    ) {
         let (from, to) = BAND_BUCKETS[self.curband];
         let mut boff = 0;
         let mut step = self.quant_hi[self.curband];
@@ -381,14 +387,22 @@ fn inverse_wavelet_transform(bm: &mut Bytemap, width: usize, height: usize, subs
             // Lifting (even samples)
             let mut prev1: i32 = 0;
             let mut next1: i32 = 0;
-            let mut next3: i32 = if 1 > kmax { 0 } else { bm.get(1 << s_degree, i) };
+            let mut next3: i32 = if 1 > kmax {
+                0
+            } else {
+                bm.get(1 << s_degree, i)
+            };
             let mut prev3: i32;
             let mut k = 0;
             while k <= kmax {
                 prev3 = prev1;
                 prev1 = next1;
                 next1 = next3;
-                next3 = if k + 3 > kmax { 0 } else { bm.get((k + 3) << s_degree, i) };
+                next3 = if k + 3 > kmax {
+                    0
+                } else {
+                    bm.get((k + 3) << s_degree, i)
+                };
                 let a = prev1 + next1;
                 let c = prev3 + next3;
                 bm.sub(k << s_degree, i, ((a << 3) + a - c + 16) >> 5);
@@ -416,11 +430,7 @@ fn inverse_wavelet_transform(bm: &mut Bytemap, width: usize, height: usize, subs
                 next1 = next3;
                 next3 = bm.get((k + 3) << s_degree, i);
                 let a = prev1 + next1;
-                bm.add(
-                    k << s_degree,
-                    i,
-                    ((a << 3) + a - (prev3 + next3) + 8) >> 4,
-                );
+                bm.add(k << s_degree, i, ((a << 3) + a - (prev3 + next3) + 8) >> 4);
                 k += 2;
             }
 
@@ -444,14 +454,22 @@ fn inverse_wavelet_transform(bm: &mut Bytemap, width: usize, height: usize, subs
             // Lifting (even samples)
             let mut prev1: i32 = 0;
             let mut next1: i32 = 0;
-            let mut next3: i32 = if 1 > kmax { 0 } else { bm.get(i, 1 << s_degree) };
+            let mut next3: i32 = if 1 > kmax {
+                0
+            } else {
+                bm.get(i, 1 << s_degree)
+            };
             let mut prev3: i32;
             let mut k = 0;
             while k <= kmax {
                 prev3 = prev1;
                 prev1 = next1;
                 next1 = next3;
-                next3 = if k + 3 > kmax { 0 } else { bm.get(i, (k + 3) << s_degree) };
+                next3 = if k + 3 > kmax {
+                    0
+                } else {
+                    bm.get(i, (k + 3) << s_degree)
+                };
                 let a = prev1 + next1;
                 let c = prev3 + next3;
                 bm.sub(i, k << s_degree, ((a << 3) + a - c + 16) >> 5);
@@ -479,11 +497,7 @@ fn inverse_wavelet_transform(bm: &mut Bytemap, width: usize, height: usize, subs
                 next1 = next3;
                 next3 = bm.get(i, (k + 3) << s_degree);
                 let a = prev1 + next1;
-                bm.add(
-                    i,
-                    k << s_degree,
-                    ((a << 3) + a - (prev3 + next3) + 8) >> 4,
-                );
+                bm.add(i, k << s_degree, ((a << 3) + a - (prev3 + next3) + 8) >> 4);
                 k += 2;
             }
 
@@ -513,6 +527,7 @@ pub struct IW44Image {
     height: u16,
     is_color: bool,
     delay: u8,
+    chroma_half: bool,
     y_codec: Option<IWDecoder>,
     cb_codec: Option<IWDecoder>,
     cr_codec: Option<IWDecoder>,
@@ -534,6 +549,7 @@ impl IW44Image {
             height: 0,
             is_color: false,
             delay: 0,
+            chroma_half: false,
             y_codec: None,
             cb_codec: None,
             cr_codec: None,
@@ -563,16 +579,19 @@ impl IW44Image {
                 return Err("IW44 first chunk header too short");
             }
             let majver = data[2];
+            let minor = data[3];
             let is_grayscale = (majver >> 7) != 0;
             let w = u16::from_be_bytes([data[4], data[5]]);
             let h = u16::from_be_bytes([data[6], data[7]]);
             let delay_byte = data[8];
-            let delay = delay_byte & 127;
+            let delay = if minor >= 2 { delay_byte & 127 } else { 0 };
+            let chroma_half = minor >= 2 && (delay_byte & 0x80) == 0;
 
             self.width = w;
             self.height = h;
             self.is_color = !is_grayscale;
             self.delay = delay;
+            self.chroma_half = self.is_color && chroma_half;
             self.cslice = 0;
             self.y_codec = Some(IWDecoder::new(w as usize, h as usize));
             if self.is_color {
@@ -618,7 +637,9 @@ impl IW44Image {
         if subsample == 0 {
             return Err(Error::Unsupported("subsample must be >= 1"));
         }
-        let y_codec = self.y_codec.as_ref()
+        let y_codec = self
+            .y_codec
+            .as_ref()
             .ok_or(Error::MissingChunk("BG44/FG44"))?;
         let sub = subsample as usize;
         let w = ((self.width as usize + sub - 1) / sub) as u32;
@@ -627,20 +648,38 @@ impl IW44Image {
         let y_bm = y_codec.get_bytemap(sub);
 
         if self.is_color {
-            let cb_bm = self.cb_codec.as_ref()
-                .ok_or(Error::MissingChunk("BG44/FG44 Cb"))?.get_bytemap(sub);
-            let cr_bm = self.cr_codec.as_ref()
-                .ok_or(Error::MissingChunk("BG44/FG44 Cr"))?.get_bytemap(sub);
+            let chroma_sub = if self.chroma_half { sub.max(2) } else { sub };
+            let cb_bm = self
+                .cb_codec
+                .as_ref()
+                .ok_or(Error::MissingChunk("BG44/FG44 Cb"))?
+                .get_bytemap(chroma_sub);
+            let cr_bm = self
+                .cr_codec
+                .as_ref()
+                .ok_or(Error::MissingChunk("BG44/FG44 Cr"))?
+                .get_bytemap(chroma_sub);
             let mut pm = Pixmap::new(w, h, 0, 0, 0, 255);
             for row in 0..h {
                 let out_row = h - 1 - row;
                 for col in 0..w {
                     let src_row = row as usize * sub;
                     let src_col = col as usize * sub;
-                    let idx = src_row * y_bm.stride + src_col;
-                    let y = normalize(y_bm.data[idx]);
-                    let b = normalize(cb_bm.data[idx]);
-                    let r = normalize(cr_bm.data[idx]);
+                    let y_idx = src_row * y_bm.stride + src_col;
+                    let chroma_row = if self.chroma_half {
+                        src_row & !1
+                    } else {
+                        src_row
+                    };
+                    let chroma_col = if self.chroma_half {
+                        src_col & !1
+                    } else {
+                        src_col
+                    };
+                    let c_idx = chroma_row * cb_bm.stride + chroma_col;
+                    let y = normalize(y_bm.data[y_idx]);
+                    let b = normalize(cb_bm.data[c_idx]);
+                    let r = normalize(cr_bm.data[c_idx]);
 
                     let t2 = r + (r >> 1);
                     let t3 = y + 128 - (b >> 2);
@@ -669,11 +708,16 @@ impl IW44Image {
         }
     }
 
-    pub fn to_normalized_planes_subsample(&self, subsample: u32) -> Result<NormalizedPlanes, Error> {
+    pub fn to_normalized_planes_subsample(
+        &self,
+        subsample: u32,
+    ) -> Result<NormalizedPlanes, Error> {
         if subsample == 0 {
             return Err(Error::Unsupported("subsample must be >= 1"));
         }
-        let y_codec = self.y_codec.as_ref()
+        let y_codec = self
+            .y_codec
+            .as_ref()
             .ok_or(Error::MissingChunk("BG44/FG44"))?;
         let sub = subsample as usize;
         let w = ((self.width as usize + sub - 1) / sub) as u32;
@@ -692,10 +736,17 @@ impl IW44Image {
         }
 
         if self.is_color {
-            let cb_bm = self.cb_codec.as_ref()
-                .ok_or(Error::MissingChunk("BG44/FG44 Cb"))?.get_bytemap(sub);
-            let cr_bm = self.cr_codec.as_ref()
-                .ok_or(Error::MissingChunk("BG44/FG44 Cr"))?.get_bytemap(sub);
+            let chroma_sub = if self.chroma_half { sub.max(2) } else { sub };
+            let cb_bm = self
+                .cb_codec
+                .as_ref()
+                .ok_or(Error::MissingChunk("BG44/FG44 Cb"))?
+                .get_bytemap(chroma_sub);
+            let cr_bm = self
+                .cr_codec
+                .as_ref()
+                .ok_or(Error::MissingChunk("BG44/FG44 Cr"))?
+                .get_bytemap(chroma_sub);
             let mut cb = vec![0i16; (w * h) as usize];
             let mut cr = vec![0i16; (w * h) as usize];
             for row in 0..h {
@@ -703,10 +754,20 @@ impl IW44Image {
                 for col in 0..w {
                     let src_row = row as usize * sub;
                     let src_col = col as usize * sub;
-                    let idx = src_row * y_bm.stride + src_col;
+                    let chroma_row = if self.chroma_half {
+                        src_row & !1
+                    } else {
+                        src_row
+                    };
+                    let chroma_col = if self.chroma_half {
+                        src_col & !1
+                    } else {
+                        src_col
+                    };
+                    let c_idx = chroma_row * cb_bm.stride + chroma_col;
                     let out_idx = (out_row * w + col) as usize;
-                    cb[out_idx] = normalize(cb_bm.data[idx]) as i16;
-                    cr[out_idx] = normalize(cr_bm.data[idx]) as i16;
+                    cb[out_idx] = normalize(cb_bm.data[c_idx]) as i16;
+                    cr[out_idx] = normalize(cr_bm.data[c_idx]) as i16;
                 }
             }
             Ok(NormalizedPlanes {
@@ -749,7 +810,11 @@ mod tests {
     fn extract_bg44_chunks<'a>(file: &'a rdjvu_iff::DjvuFile<'a>) -> Vec<&'a [u8]> {
         fn collect_from_djvu_form<'a>(chunk: &'a rdjvu_iff::Chunk<'a>) -> Option<Vec<&'a [u8]>> {
             match chunk {
-                rdjvu_iff::Chunk::Form { secondary_id, children, .. } => {
+                rdjvu_iff::Chunk::Form {
+                    secondary_id,
+                    children,
+                    ..
+                } => {
                     if secondary_id == b"DJVU" {
                         let v = children
                             .iter()
@@ -773,7 +838,10 @@ mod tests {
         collect_from_djvu_form(&file.root).unwrap_or_default()
     }
 
-    fn decode_chunks_with_options(chunks: &[&[u8]], preadvance_color_delay: bool) -> Result<IW44Image, &'static str> {
+    fn decode_chunks_with_options(
+        chunks: &[&[u8]],
+        preadvance_color_delay: bool,
+    ) -> Result<IW44Image, &'static str> {
         let mut img = IW44Image::new();
         for data in chunks {
             if data.len() < 2 {
@@ -788,16 +856,19 @@ mod tests {
                     return Err("IW44 first chunk header too short");
                 }
                 let majver = data[2];
+                let minor = data[3];
                 let is_grayscale = (majver >> 7) != 0;
                 let w = u16::from_be_bytes([data[4], data[5]]);
                 let h = u16::from_be_bytes([data[6], data[7]]);
                 let delay_byte = data[8];
-                let delay = delay_byte & 127;
+                let delay = if minor >= 2 { delay_byte & 127 } else { 0 };
+                let chroma_half = minor >= 2 && (delay_byte & 0x80) == 0;
 
                 img.width = w;
                 img.height = h;
                 img.is_color = !is_grayscale;
                 img.delay = delay;
+                img.chroma_half = img.is_color && chroma_half;
                 img.cslice = 0;
                 img.y_codec = Some(IWDecoder::new(w as usize, h as usize));
                 if img.is_color {
@@ -869,16 +940,19 @@ mod tests {
                     return Err("IW44 first chunk header too short");
                 }
                 let majver = data[2];
+                let minor = data[3];
                 let is_grayscale = (majver >> 7) != 0;
                 let w = u16::from_be_bytes([data[4], data[5]]);
                 let h = u16::from_be_bytes([data[6], data[7]]);
                 let delay_byte = data[8];
-                let delay = delay_byte & 127;
+                let delay = if minor >= 2 { delay_byte & 127 } else { 0 };
+                let chroma_half = minor >= 2 && (delay_byte & 0x80) == 0;
 
                 img.width = w;
                 img.height = h;
                 img.is_color = !is_grayscale;
                 img.delay = delay;
+                img.chroma_half = img.is_color && chroma_half;
                 img.cslice = 0;
                 img.y_codec = Some(IWDecoder::new(w as usize, h as usize));
                 if img.is_color {
@@ -1019,13 +1093,7 @@ mod tests {
         }
 
         inverse_wavelet_transform_custom(
-            &mut bm,
-            dec.width,
-            dec.height,
-            subsample,
-            even_bias,
-            pred_bias,
-            mid_bias,
+            &mut bm, dec.width, dec.height, subsample, even_bias, pred_bias, mid_bias,
         );
         bm
     }
@@ -1047,14 +1115,22 @@ mod tests {
             for i in (0..width).step_by(s) {
                 let mut prev1: i32 = 0;
                 let mut next1: i32 = 0;
-                let mut next3: i32 = if 1 > kmax { 0 } else { bm.get(1 << s_degree, i) };
+                let mut next3: i32 = if 1 > kmax {
+                    0
+                } else {
+                    bm.get(1 << s_degree, i)
+                };
                 let mut prev3: i32;
                 let mut k = 0;
                 while k <= kmax {
                     prev3 = prev1;
                     prev1 = next1;
                     next1 = next3;
-                    next3 = if k + 3 > kmax { 0 } else { bm.get((k + 3) << s_degree, i) };
+                    next3 = if k + 3 > kmax {
+                        0
+                    } else {
+                        bm.get((k + 3) << s_degree, i)
+                    };
                     let a = prev1 + next1;
                     let c = prev3 + next3;
                     bm.sub(k << s_degree, i, ((a << 3) + a - c + even_bias) >> 5);
@@ -1081,7 +1157,11 @@ mod tests {
                     next1 = next3;
                     next3 = bm.get((k + 3) << s_degree, i);
                     let a = prev1 + next1;
-                    bm.add(k << s_degree, i, ((a << 3) + a - (prev3 + next3) + mid_bias) >> 4);
+                    bm.add(
+                        k << s_degree,
+                        i,
+                        ((a << 3) + a - (prev3 + next3) + mid_bias) >> 4,
+                    );
                     k += 2;
                 }
 
@@ -1103,14 +1183,22 @@ mod tests {
             for i in (0..height).step_by(s) {
                 let mut prev1: i32 = 0;
                 let mut next1: i32 = 0;
-                let mut next3: i32 = if 1 > kmax { 0 } else { bm.get(i, 1 << s_degree) };
+                let mut next3: i32 = if 1 > kmax {
+                    0
+                } else {
+                    bm.get(i, 1 << s_degree)
+                };
                 let mut prev3: i32;
                 let mut k = 0;
                 while k <= kmax {
                     prev3 = prev1;
                     prev1 = next1;
                     next1 = next3;
-                    next3 = if k + 3 > kmax { 0 } else { bm.get(i, (k + 3) << s_degree) };
+                    next3 = if k + 3 > kmax {
+                        0
+                    } else {
+                        bm.get(i, (k + 3) << s_degree)
+                    };
                     let a = prev1 + next1;
                     let c = prev3 + next3;
                     bm.sub(i, k << s_degree, ((a << 3) + a - c + even_bias) >> 5);
@@ -1137,7 +1225,11 @@ mod tests {
                     next1 = next3;
                     next3 = bm.get(i, (k + 3) << s_degree);
                     let a = prev1 + next1;
-                    bm.add(i, k << s_degree, ((a << 3) + a - (prev3 + next3) + mid_bias) >> 4);
+                    bm.add(
+                        i,
+                        k << s_degree,
+                        ((a << 3) + a - (prev3 + next3) + mid_bias) >> 4,
+                    );
                     k += 2;
                 }
 
@@ -1444,7 +1536,12 @@ mod tests {
 
     #[test]
     fn debug_bg_header_profiles() {
-        for file in ["carte.djvu", "colorbook.djvu", "navm_fgbz.djvu", "chicken.djvu"] {
+        for file in [
+            "carte.djvu",
+            "colorbook.djvu",
+            "navm_fgbz.djvu",
+            "chicken.djvu",
+        ] {
             let data = std::fs::read(assets_path().join(file)).unwrap();
             let parsed = rdjvu_iff::parse(&data).unwrap();
             let chunks = extract_bg44_chunks(&parsed);
@@ -1478,13 +1575,34 @@ mod tests {
     }
 
     #[test]
+    fn iw44_parse_crcb_half_mode() {
+        for (file, expected_half) in [
+            ("carte.djvu", true),
+            ("colorbook.djvu", false),
+            ("chicken.djvu", false),
+            ("navm_fgbz.djvu", false),
+        ] {
+            let data = std::fs::read(assets_path().join(file)).unwrap();
+            let parsed = rdjvu_iff::parse(&data).unwrap();
+            let chunks = extract_bg44_chunks(&parsed);
+            if chunks.is_empty() {
+                continue;
+            }
+            let mut img = IW44Image::new();
+            img.decode_chunk(chunks[0]).unwrap();
+            assert_eq!(img.chroma_half, expected_half, "{}", file);
+        }
+    }
+
+    #[test]
     fn debug_carte_bg_progressive_chunk_mismatch() {
         let data = std::fs::read(assets_path().join("carte.djvu")).unwrap();
         let file = rdjvu_iff::parse(&data).unwrap();
         let chunks = extract_bg44_chunks(&file);
 
         for nchunks in 1..=chunks.len() {
-            let ref_path = std::path::PathBuf::from(format!("/tmp/rdjvu_debug/carte_bg_{}_ref.ppm", nchunks));
+            let ref_path =
+                std::path::PathBuf::from(format!("/tmp/rdjvu_debug/carte_bg_{}_ref.ppm", nchunks));
             if !ref_path.exists() {
                 continue;
             }
@@ -1528,7 +1646,8 @@ mod tests {
         let chunks = extract_bg44_chunks(&file);
 
         for nchunks in 1..=chunks.len() {
-            let ref_path = std::path::PathBuf::from(format!("/tmp/rdjvu_debug/carte_bg_{}_ref.ppm", nchunks));
+            let ref_path =
+                std::path::PathBuf::from(format!("/tmp/rdjvu_debug/carte_bg_{}_ref.ppm", nchunks));
             if !ref_path.exists() {
                 continue;
             }
@@ -1765,7 +1884,10 @@ mod tests {
         }
         ranked.sort_unstable_by(|a, b| b.0.cmp(&a.0));
 
-        eprintln!("carte chunk1 total_mismatch_px={} blocks={}x{}", total, bw, bh);
+        eprintln!(
+            "carte chunk1 total_mismatch_px={} blocks={}x{}",
+            total, bw, bh
+        );
         for (rank, (diff, abs, bx, by)) in ranked.into_iter().take(12).enumerate() {
             eprintln!(
                 "rank={} block=({}, {}) diff_px={} mean_abs=({:.3},{:.3},{:.3})",
@@ -1837,7 +1959,11 @@ mod tests {
     fn debug_color_delay_preadvance_candidate() {
         let cases = [
             ("carte", "carte.djvu", "/tmp/rdjvu_debug/carte_bg_4_ref.ppm"),
-            ("colorbook", "colorbook.djvu", "/tmp/rdjvu_debug/colorbook_bg_ref.ppm"),
+            (
+                "colorbook",
+                "colorbook.djvu",
+                "/tmp/rdjvu_debug/colorbook_bg_ref.ppm",
+            ),
             ("chicken", "chicken.djvu", "__golden__"),
         ];
 
@@ -1890,7 +2016,11 @@ mod tests {
     fn debug_context_reset_candidates() {
         let cases = [
             ("carte", "carte.djvu", "/tmp/rdjvu_debug/carte_bg_4_ref.ppm"),
-            ("colorbook", "colorbook.djvu", "/tmp/rdjvu_debug/colorbook_bg_ref.ppm"),
+            (
+                "colorbook",
+                "colorbook.djvu",
+                "/tmp/rdjvu_debug/colorbook_bg_ref.ppm",
+            ),
             ("chicken", "chicken.djvu", "__golden__"),
         ];
         let variants = [
@@ -1924,7 +2054,8 @@ mod tests {
                     reset_each_chunk,
                     reset_each_slice,
                     reset_on_color_start,
-                ).unwrap();
+                )
+                .unwrap();
                 let actual = img.to_pixmap().unwrap().to_ppm();
                 let header_end = find_ppm_data_start(&actual);
                 let a = &actual[header_end..];

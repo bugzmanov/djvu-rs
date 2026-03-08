@@ -26,7 +26,9 @@ pub fn render_to_size(page: &Page, w: u32, h: u32) -> Result<Pixmap, Error> {
         match (&mask, &bg, &fg) {
             (None, Some(bg), _) => composite_bg_only(w, h, bg, page_w, page_h),
             (Some(mask), None, None) => composite_bilevel(w, h, mask, page_w, page_h),
-            (Some(mask), Some(bg), Some(fg)) => composite_3layer(w, h, mask, bg, fg, page_w, page_h),
+            (Some(mask), Some(bg), Some(fg)) => {
+                composite_3layer(w, h, mask, bg, fg, page_w, page_h)
+            }
             (Some(mask), Some(bg), None) => composite_mask_bg(w, h, mask, bg, page_w, page_h),
             (Some(mask), None, Some(fg)) => composite_mask_fg(w, h, mask, fg, page_w, page_h),
             (None, None, _) => Pixmap::white(w, h),
@@ -73,7 +75,14 @@ fn composite_bilevel(w: u32, h: u32, mask: &Bitmap, page_w: u32, page_h: u32) ->
 // Mask + BG: background where mask=0, black text where mask=1
 // ============================================================
 
-fn composite_mask_bg(w: u32, h: u32, mask: &Bitmap, bg: &Pixmap, page_w: u32, page_h: u32) -> Pixmap {
+fn composite_mask_bg(
+    w: u32,
+    h: u32,
+    mask: &Bitmap,
+    bg: &Pixmap,
+    page_w: u32,
+    page_h: u32,
+) -> Pixmap {
     let mut out = composite_bg_only(w, h, bg, page_w, page_h);
     for y in 0..h {
         for x in 0..w {
@@ -89,7 +98,14 @@ fn composite_mask_bg(w: u32, h: u32, mask: &Bitmap, bg: &Pixmap, page_w: u32, pa
 // Mask + FG (no BG): foreground color where mask=1, white elsewhere
 // ============================================================
 
-fn composite_mask_fg(w: u32, h: u32, mask: &Bitmap, fg: &Pixmap, page_w: u32, page_h: u32) -> Pixmap {
+fn composite_mask_fg(
+    w: u32,
+    h: u32,
+    mask: &Bitmap,
+    fg: &Pixmap,
+    page_w: u32,
+    page_h: u32,
+) -> Pixmap {
     let mut out = Pixmap::white(w, h);
     for y in 0..h {
         for x in 0..w {
@@ -107,7 +123,15 @@ fn composite_mask_fg(w: u32, h: u32, mask: &Bitmap, fg: &Pixmap, page_w: u32, pa
 // 3-layer: mask selects between FG and BG
 // ============================================================
 
-fn composite_3layer(w: u32, h: u32, mask: &Bitmap, bg: &Pixmap, fg: &Pixmap, page_w: u32, page_h: u32) -> Pixmap {
+fn composite_3layer(
+    w: u32,
+    h: u32,
+    mask: &Bitmap,
+    bg: &Pixmap,
+    fg: &Pixmap,
+    page_w: u32,
+    page_h: u32,
+) -> Pixmap {
     let mut out = Pixmap::white(w, h);
     for y in 0..h {
         for x in 0..w {
@@ -128,18 +152,24 @@ fn composite_3layer(w: u32, h: u32, mask: &Bitmap, bg: &Pixmap, fg: &Pixmap, pag
 // Palette composite: mask + BG + FGbz palette colors
 // ============================================================
 
-fn render_with_palette(page: &Page, w: u32, h: u32, page_w: u32, page_h: u32) -> Result<Pixmap, Error> {
+fn render_with_palette(
+    page: &Page,
+    w: u32,
+    h: u32,
+    page_w: u32,
+    page_h: u32,
+) -> Result<Pixmap, Error> {
     let mask_indexed = page.decode_mask_indexed()?;
     let bg = page.decode_background()?;
     let palette = page.decode_palette()?;
 
     match (mask_indexed, bg, palette) {
-        (Some((mask, blit_map)), Some(bg), Some(pal)) => {
-            Ok(composite_palette(w, h, &mask, &blit_map, &bg, &pal, page_w, page_h))
-        }
-        (Some((mask, blit_map)), None, Some(pal)) => {
-            Ok(composite_palette_no_bg(w, h, &mask, &blit_map, &pal, page_w, page_h))
-        }
+        (Some((mask, blit_map)), Some(bg), Some(pal)) => Ok(composite_palette(
+            w, h, &mask, &blit_map, &bg, &pal, page_w, page_h,
+        )),
+        (Some((mask, blit_map)), None, Some(pal)) => Ok(composite_palette_no_bg(
+            w, h, &mask, &blit_map, &pal, page_w, page_h,
+        )),
         (None, Some(bg), _) => Ok(composite_bg_only(w, h, &bg, page_w, page_h)),
         _ => Ok(Pixmap::white(w, h)),
     }
@@ -160,7 +190,16 @@ fn palette_color(pal: &Palette, blit_idx: i32) -> (u8, u8, u8) {
     (0, 0, 0)
 }
 
-fn composite_palette(w: u32, h: u32, mask: &Bitmap, blit_map: &[i32], bg: &Pixmap, pal: &Palette, page_w: u32, page_h: u32) -> Pixmap {
+fn composite_palette(
+    w: u32,
+    h: u32,
+    mask: &Bitmap,
+    blit_map: &[i32],
+    bg: &Pixmap,
+    pal: &Palette,
+    page_w: u32,
+    page_h: u32,
+) -> Pixmap {
     let mut out = Pixmap::white(w, h);
     for y in 0..h {
         for x in 0..w {
@@ -183,7 +222,15 @@ fn composite_palette(w: u32, h: u32, mask: &Bitmap, blit_map: &[i32], bg: &Pixma
     out
 }
 
-fn composite_palette_no_bg(w: u32, h: u32, mask: &Bitmap, blit_map: &[i32], pal: &Palette, page_w: u32, page_h: u32) -> Pixmap {
+fn composite_palette_no_bg(
+    w: u32,
+    h: u32,
+    mask: &Bitmap,
+    blit_map: &[i32],
+    pal: &Palette,
+    page_w: u32,
+    page_h: u32,
+) -> Pixmap {
     let mut out = Pixmap::white(w, h);
     for y in 0..h {
         for x in 0..w {
@@ -208,10 +255,14 @@ fn composite_palette_no_bg(w: u32, h: u32, mask: &Bitmap, blit_map: &[i32], pal:
 
 /// Map output pixel (x,y) at output size (ow,oh) to page coordinates (page_w, page_h).
 fn map_to_page(x: u32, y: u32, ow: u32, oh: u32, page_w: u32, page_h: u32) -> (u32, u32) {
-    let px = if ow == page_w { x } else {
+    let px = if ow == page_w {
+        x
+    } else {
         ((x as f64 + 0.5) * page_w as f64 / ow as f64) as u32
     };
-    let py = if oh == page_h { y } else {
+    let py = if oh == page_h {
+        y
+    } else {
         ((y as f64 + 0.5) * page_h as f64 / oh as f64) as u32
     };
     (px.min(page_w - 1), py.min(page_h - 1))
@@ -234,7 +285,13 @@ fn layer_virtual_geometry(src: &Pixmap, page_w: u32, page_h: u32) -> (u32, u32, 
     (reduction, virt_w, virt_h, virt_page_w, virt_page_h)
 }
 
-fn sample_nearest_virtual(src: &Pixmap, page_x: u32, page_y: u32, page_w: u32, page_h: u32) -> (u8, u8, u8) {
+fn sample_nearest_virtual(
+    src: &Pixmap,
+    page_x: u32,
+    page_y: u32,
+    page_w: u32,
+    page_h: u32,
+) -> (u8, u8, u8) {
     let (reduction, _, _, virt_page_w, virt_page_h) = layer_virtual_geometry(src, page_w, page_h);
     let px = page_x.min(virt_page_w - 1);
     // IW44 rows are flipped during decode. When the raw layer height contains
@@ -248,7 +305,13 @@ fn sample_nearest_virtual(src: &Pixmap, page_x: u32, page_y: u32, page_w: u32, p
     src.get_rgb(sx, sy)
 }
 
-fn sample_bilinear_virtual(src: &Pixmap, page_x: u32, page_y: u32, page_w: u32, page_h: u32) -> (u8, u8, u8) {
+fn sample_bilinear_virtual(
+    src: &Pixmap,
+    page_x: u32,
+    page_y: u32,
+    page_w: u32,
+    page_h: u32,
+) -> (u8, u8, u8) {
     let (_, virt_w, virt_h, virt_page_w, virt_page_h) = layer_virtual_geometry(src, page_w, page_h);
     let sw = virt_w as f64;
     let sh = virt_h as f64;
@@ -263,18 +326,17 @@ fn sample_bilinear_virtual(src: &Pixmap, page_x: u32, page_y: u32, page_w: u32, 
     let sy0 = sy as u32;
     let sx1 = (sx0 + 1).min(virt_w.saturating_sub(1)).min(src.width - 1);
     let sy1 = (sy0 + 1).min(virt_h.saturating_sub(1)).min(src.height - 1);
-    let fx = ((sx - sx0 as f64) * 256.0 + 0.5).floor().clamp(0.0, 255.0) as u32;
-    let fy = ((sy - sy0 as f64) * 256.0 + 0.5).floor().clamp(0.0, 255.0) as u32;
+    let fx = ((sx - sx0 as f64) * 16.0 + 0.5).floor().clamp(0.0, 15.0) as u32;
+    let fy = ((sy - sy0 as f64) * 16.0 + 0.5).floor().clamp(0.0, 15.0) as u32;
     let (r00, g00, b00) = src.get_rgb(sx0.min(src.width - 1), sy0.min(src.height - 1));
     let (r10, g10, b10) = src.get_rgb(sx1, sy0.min(src.height - 1));
     let (r01, g01, b01) = src.get_rgb(sx0.min(src.width - 1), sy1);
     let (r11, g11, b11) = src.get_rgb(sx1, sy1);
     let interp_h = |v0: u8, v1: u8| -> u32 {
-        ((v0 as u32 * (256 - fx) + v1 as u32 * fx + 128) >> 8).clamp(0, 255)
+        ((v0 as u32 * (16 - fx) + v1 as u32 * fx + 8) >> 4).clamp(0, 255)
     };
-    let interp_v = |v0: u32, v1: u32| -> u8 {
-        ((v0 * (256 - fy) + v1 * fy + 128) >> 8).clamp(0, 255) as u8
-    };
+    let interp_v =
+        |v0: u32, v1: u32| -> u8 { ((v0 * (16 - fy) + v1 * fy + 8) >> 4).clamp(0, 255) as u8 };
     (
         interp_v(interp_h(r00, r10), interp_h(r01, r11)),
         interp_v(interp_h(g00, g10), interp_h(g01, g11)),
@@ -454,20 +516,28 @@ mod tests {
     fn assert_ppm_match(pixmap: &Pixmap, golden_file: &str) {
         let actual = pixmap.to_ppm();
         let expected = std::fs::read(golden_path().join(golden_file)).unwrap();
-        assert_eq!(actual.len(), expected.len(), "{}: size mismatch {} vs {}", golden_file, actual.len(), expected.len());
+        assert_eq!(
+            actual.len(),
+            expected.len(),
+            "{}: size mismatch {} vs {}",
+            golden_file,
+            actual.len(),
+            expected.len()
+        );
 
         let stats = diff_stats(&actual, &expected);
         let total = stats.pixel_count * 3;
         if stats.byte_mismatches > 0 {
             panic!(
                 "{}: {} pixel-bytes differ ({}/{} = {:.1}%)",
-                golden_file, stats.byte_mismatches,
-                stats.byte_mismatches, total,
+                golden_file,
+                stats.byte_mismatches,
+                stats.byte_mismatches,
+                total,
                 stats.byte_mismatches as f64 / total as f64 * 100.0
             );
         }
     }
-
 
     #[test]
     fn render_chicken_bg_only() {
@@ -529,8 +599,18 @@ mod tests {
             let expected = std::fs::read(rp).unwrap();
             let actual = actual.to_ppm();
             let header_end = actual.iter().position(|&b| b == b'\n').unwrap() + 1;
-            let header_end = header_end + actual[header_end..].iter().position(|&b| b == b'\n').unwrap() + 1;
-            let header_end = header_end + actual[header_end..].iter().position(|&b| b == b'\n').unwrap() + 1;
+            let header_end = header_end
+                + actual[header_end..]
+                    .iter()
+                    .position(|&b| b == b'\n')
+                    .unwrap()
+                + 1;
+            let header_end = header_end
+                + actual[header_end..]
+                    .iter()
+                    .position(|&b| b == b'\n')
+                    .unwrap()
+                + 1;
             let a = &actual[header_end..];
             let e = &expected[header_end..];
             let px = (a.len().min(e.len())) / 3;
@@ -552,12 +632,33 @@ mod tests {
         let fg = page.decode_foreground().unwrap().unwrap();
         let comp = render(&page).unwrap();
         compare(
-            &composite_bg_only(page.info.width as u32, page.info.height as u32, &bg, page.info.width as u32, page.info.height as u32),
+            &composite_bg_only(
+                page.info.width as u32,
+                page.info.height as u32,
+                &bg,
+                page.info.width as u32,
+                page.info.height as u32,
+            ),
             "/tmp/rdjvu_debug/colorbook_p1_bg.ppm",
             "colorbook bg",
         );
-        compare(&composite_mask_fg(page.info.width as u32, page.info.height as u32, &mask, &fg, page.info.width as u32, page.info.height as u32), "/tmp/rdjvu_debug/colorbook_p1_fg.ppm", "colorbook fg");
-        compare(&comp, "/tmp/rdjvu_debug/colorbook_p1_bg.ppm", "colorbook full-vs-bg");
+        compare(
+            &composite_mask_fg(
+                page.info.width as u32,
+                page.info.height as u32,
+                &mask,
+                &fg,
+                page.info.width as u32,
+                page.info.height as u32,
+            ),
+            "/tmp/rdjvu_debug/colorbook_p1_fg.ppm",
+            "colorbook fg",
+        );
+        compare(
+            &comp,
+            "/tmp/rdjvu_debug/colorbook_p1_bg.ppm",
+            "colorbook full-vs-bg",
+        );
 
         let data = std::fs::read(assets_path().join("navm_fgbz.djvu")).unwrap();
         let doc = Document::parse(&data).unwrap();
@@ -565,11 +666,21 @@ mod tests {
         let bg = page.decode_background().unwrap().unwrap();
         let comp = render(&page).unwrap();
         compare(
-            &composite_bg_only(page.info.width as u32, page.info.height as u32, &bg, page.info.width as u32, page.info.height as u32),
+            &composite_bg_only(
+                page.info.width as u32,
+                page.info.height as u32,
+                &bg,
+                page.info.width as u32,
+                page.info.height as u32,
+            ),
             "/tmp/rdjvu_debug/navm_p4_bg.ppm",
             "navm p4 bg",
         );
-        compare(&comp, "/tmp/rdjvu_debug/navm_p4_bg.ppm", "navm p4 full-vs-bg");
+        compare(
+            &comp,
+            "/tmp/rdjvu_debug/navm_p4_bg.ppm",
+            "navm p4 full-vs-bg",
+        );
     }
 
     #[test]
@@ -582,8 +693,18 @@ mod tests {
             let expected = std::fs::read(rp).unwrap();
             let actual = actual.to_ppm();
             let header_end = actual.iter().position(|&b| b == b'\n').unwrap() + 1;
-            let header_end = header_end + actual[header_end..].iter().position(|&b| b == b'\n').unwrap() + 1;
-            let header_end = header_end + actual[header_end..].iter().position(|&b| b == b'\n').unwrap() + 1;
+            let header_end = header_end
+                + actual[header_end..]
+                    .iter()
+                    .position(|&b| b == b'\n')
+                    .unwrap()
+                + 1;
+            let header_end = header_end
+                + actual[header_end..]
+                    .iter()
+                    .position(|&b| b == b'\n')
+                    .unwrap()
+                + 1;
             let a = &actual[header_end..];
             let e = &expected[header_end..];
             let px = (a.len().min(e.len())) / 3;
@@ -617,7 +738,14 @@ mod tests {
             "carte bg",
         );
         compare(
-            &composite_mask_fg(page.info.width as u32, page.info.height as u32, &mask, &fg, page.info.width as u32, page.info.height as u32),
+            &composite_mask_fg(
+                page.info.width as u32,
+                page.info.height as u32,
+                &mask,
+                &fg,
+                page.info.width as u32,
+                page.info.height as u32,
+            ),
             "/tmp/rdjvu_debug/carte_fg.ppm",
             "carte fg",
         );
@@ -648,8 +776,18 @@ mod tests {
             }
             let actual = out.to_ppm();
             let header_end = actual.iter().position(|&b| b == b'\n').unwrap() + 1;
-            let header_end = header_end + actual[header_end..].iter().position(|&b| b == b'\n').unwrap() + 1;
-            let header_end = header_end + actual[header_end..].iter().position(|&b| b == b'\n').unwrap() + 1;
+            let header_end = header_end
+                + actual[header_end..]
+                    .iter()
+                    .position(|&b| b == b'\n')
+                    .unwrap()
+                + 1;
+            let header_end = header_end
+                + actual[header_end..]
+                    .iter()
+                    .position(|&b| b == b'\n')
+                    .unwrap()
+                + 1;
             let a = &actual[header_end..];
             let e = &expected[header_end..];
             let px = (a.len().min(e.len())) / 3;
@@ -669,7 +807,9 @@ mod tests {
             let sy = (y / scale).min(bg.height - 1);
             bg.get_rgb(sx, sy)
         });
-        compare("bilinear_round_scale", &|x, y| sample_bilinear(&bg, x, y, w, h));
+        compare("bilinear_round_scale", &|x, y| {
+            sample_bilinear(&bg, x, y, w, h)
+        });
 
         let bilinear_map = |x: u32, y: u32, mode: &str, round_mode: &str| -> (u8, u8, u8) {
             let sw = bg.width as f64;
@@ -689,8 +829,16 @@ mod tests {
                 ),
                 // align first/last sample to first/last source pixel
                 "edge" => (
-                    if w > 1 { (x as f64 * (sw - 1.0) / (dw - 1.0)).clamp(0.0, sw - 1.0) } else { 0.0 },
-                    if h > 1 { (y as f64 * (sh - 1.0) / (dh - 1.0)).clamp(0.0, sh - 1.0) } else { 0.0 },
+                    if w > 1 {
+                        (x as f64 * (sw - 1.0) / (dw - 1.0)).clamp(0.0, sw - 1.0)
+                    } else {
+                        0.0
+                    },
+                    if h > 1 {
+                        (y as f64 * (sh - 1.0) / (dh - 1.0)).clamp(0.0, sh - 1.0)
+                    } else {
+                        0.0
+                    },
                 ),
                 _ => unreachable!(),
             };
@@ -715,7 +863,11 @@ mod tests {
                     _ => unreachable!(),
                 }
             };
-            (interp(r00, r10, r01, r11), interp(g00, g10, g01, g11), interp(b00, b10, b01, b11))
+            (
+                interp(r00, r10, r01, r11),
+                interp(g00, g10, g01, g11),
+                interp(b00, b10, b01, b11),
+            )
         };
 
         for mode in ["center", "corner", "edge"] {
@@ -787,7 +939,9 @@ mod tests {
             let (r11, g11, b11) = bg.get_rgb(sx1, sy1);
             let gamma = 2.2f64;
             let to_lin = |v: u8| (v as f64 / 255.0).powf(gamma);
-            let to_srgb = |v: f64| (v.clamp(0.0, 1.0).powf(1.0 / gamma) * 255.0 + 0.5).clamp(0.0, 255.0) as u8;
+            let to_srgb = |v: f64| {
+                (v.clamp(0.0, 1.0).powf(1.0 / gamma) * 255.0 + 0.5).clamp(0.0, 255.0) as u8
+            };
             let interp = |v00: u8, v10: u8, v01: u8, v11: u8| -> u8 {
                 let v = to_lin(v00) * (1.0 - fx) * (1.0 - fy)
                     + to_lin(v10) * fx * (1.0 - fy)
@@ -827,8 +981,18 @@ mod tests {
             }
             let actual = out.to_ppm();
             let header_end = actual.iter().position(|&b| b == b'\n').unwrap() + 1;
-            let header_end = header_end + actual[header_end..].iter().position(|&b| b == b'\n').unwrap() + 1;
-            let header_end = header_end + actual[header_end..].iter().position(|&b| b == b'\n').unwrap() + 1;
+            let header_end = header_end
+                + actual[header_end..]
+                    .iter()
+                    .position(|&b| b == b'\n')
+                    .unwrap()
+                + 1;
+            let header_end = header_end
+                + actual[header_end..]
+                    .iter()
+                    .position(|&b| b == b'\n')
+                    .unwrap()
+                + 1;
             let a = &actual[header_end..];
             let e = &expected[header_end..];
             let px = (a.len().min(e.len())) / 3;
@@ -848,7 +1012,9 @@ mod tests {
             let sy = (y / scale).min(bg.height - 1);
             bg.get_rgb(sx, sy)
         });
-        compare("bilinear_round_scale", &|x, y| sample_bilinear(&bg, x, y, w, h));
+        compare("bilinear_round_scale", &|x, y| {
+            sample_bilinear(&bg, x, y, w, h)
+        });
 
         let bilinear_map = |x: u32, y: u32, mode: &str, round_mode: &str| -> (u8, u8, u8) {
             let sw = bg.width as f64;
@@ -865,8 +1031,16 @@ mod tests {
                     (y as f64 * sh / dh).clamp(0.0, sh - 1.0),
                 ),
                 "edge" => (
-                    if w > 1 { (x as f64 * (sw - 1.0) / (dw - 1.0)).clamp(0.0, sw - 1.0) } else { 0.0 },
-                    if h > 1 { (y as f64 * (sh - 1.0) / (dh - 1.0)).clamp(0.0, sh - 1.0) } else { 0.0 },
+                    if w > 1 {
+                        (x as f64 * (sw - 1.0) / (dw - 1.0)).clamp(0.0, sw - 1.0)
+                    } else {
+                        0.0
+                    },
+                    if h > 1 {
+                        (y as f64 * (sh - 1.0) / (dh - 1.0)).clamp(0.0, sh - 1.0)
+                    } else {
+                        0.0
+                    },
                 ),
                 _ => unreachable!(),
             };
@@ -950,6 +1124,358 @@ mod tests {
     }
 
     #[test]
+    fn debug_carte_bg_phase_search() {
+        let ref_path = std::path::Path::new("/tmp/rdjvu_debug/carte_bg.ppm");
+        if !ref_path.exists() {
+            return;
+        }
+        let expected = std::fs::read(ref_path).unwrap();
+        let data = std::fs::read(assets_path().join("carte.djvu")).unwrap();
+        let doc = Document::parse(&data).unwrap();
+        let page = doc.page(0).unwrap();
+        let bg = page.decode_background().unwrap().unwrap();
+        let w = page.info.width as u32;
+        let h = page.info.height as u32;
+        let mut best_x = Vec::new();
+        let mut best_y = Vec::new();
+
+        let render_with_phase = |x_phase: f64, y_phase: f64| -> Pixmap {
+            let mut out = Pixmap::white(w, h);
+            let sw = bg.width as f64;
+            let sh = bg.height as f64;
+            let dw = w as f64;
+            let dh = h as f64;
+            for y in 0..h {
+                let sy = ((y as f64 + 0.5) * sh / dh - 0.5 + y_phase).clamp(0.0, sh - 1.0);
+                let sy0 = sy as u32;
+                let sy1 = (sy0 + 1).min(bg.height - 1);
+                let fy = ((sy - sy0 as f64) * 256.0 + 0.5).floor().clamp(0.0, 255.0) as u32;
+                for x in 0..w {
+                    let sx = ((x as f64 + 0.5) * sw / dw - 0.5 + x_phase).clamp(0.0, sw - 1.0);
+                    let sx0 = sx as u32;
+                    let sx1 = (sx0 + 1).min(bg.width - 1);
+                    let fx = ((sx - sx0 as f64) * 256.0 + 0.5).floor().clamp(0.0, 255.0) as u32;
+                    let (r00, g00, b00) = bg.get_rgb(sx0, sy0);
+                    let (r10, g10, b10) = bg.get_rgb(sx1, sy0);
+                    let (r01, g01, b01) = bg.get_rgb(sx0, sy1);
+                    let (r11, g11, b11) = bg.get_rgb(sx1, sy1);
+                    let interp_h = |v0: u8, v1: u8| -> u32 {
+                        ((v0 as u32 * (256 - fx) + v1 as u32 * fx + 128) >> 8).clamp(0, 255)
+                    };
+                    let interp_v = |v0: u32, v1: u32| -> u8 {
+                        ((v0 * (256 - fy) + v1 * fy + 128) >> 8).clamp(0, 255) as u8
+                    };
+                    out.set_rgb(
+                        x,
+                        y,
+                        interp_v(interp_h(r00, r10), interp_h(r01, r11)),
+                        interp_v(interp_h(g00, g10), interp_h(g01, g11)),
+                        interp_v(interp_h(b00, b10), interp_h(b01, b11)),
+                    );
+                }
+            }
+            out
+        };
+
+        for step in -16..=16 {
+            let phase = step as f64 / 16.0;
+            let stats = diff_stats(&render_with_phase(phase, 0.0).to_ppm(), &expected);
+            best_x.push((stats.byte_mismatches, stats.pixel_mismatches, step));
+        }
+        best_x.sort_unstable();
+        for (rank, (byte_mismatches, pixel_mismatches, step)) in
+            best_x.into_iter().take(10).enumerate()
+        {
+            eprintln!(
+                "carte bg xphase rank={} step={} phase={:.4} byte_mismatch={} pixel_mismatch={}",
+                rank + 1,
+                step,
+                step as f64 / 16.0,
+                byte_mismatches,
+                pixel_mismatches,
+            );
+        }
+
+        for step in -16..=16 {
+            let phase = step as f64 / 16.0;
+            let stats = diff_stats(&render_with_phase(0.0, phase).to_ppm(), &expected);
+            best_y.push((stats.byte_mismatches, stats.pixel_mismatches, step));
+        }
+        best_y.sort_unstable();
+        for (rank, (byte_mismatches, pixel_mismatches, step)) in
+            best_y.into_iter().take(10).enumerate()
+        {
+            eprintln!(
+                "carte bg yphase rank={} step={} phase={:.4} byte_mismatch={} pixel_mismatch={}",
+                rank + 1,
+                step,
+                step as f64 / 16.0,
+                byte_mismatches,
+                pixel_mismatches,
+            );
+        }
+    }
+
+    #[test]
+    fn debug_carte_bg_frac16_candidate() {
+        let ref_path = std::path::Path::new("/tmp/rdjvu_debug/carte_bg.ppm");
+        if !ref_path.exists() {
+            return;
+        }
+        let expected = std::fs::read(ref_path).unwrap();
+        let data = std::fs::read(assets_path().join("carte.djvu")).unwrap();
+        let doc = Document::parse(&data).unwrap();
+        let page = doc.page(0).unwrap();
+        let bg = page.decode_background().unwrap().unwrap();
+        let w = page.info.width as u32;
+        let h = page.info.height as u32;
+
+        let sw = bg.width as f64;
+        let sh = bg.height as f64;
+        let dw = w as f64;
+        let dh = h as f64;
+        for (label, round_bias) in [("nearest", 0.5f64), ("floor", 0.0f64)] {
+            let mut out = Pixmap::white(w, h);
+            for y in 0..h {
+                let sy = ((y as f64 + 0.5) * sh / dh - 0.5).clamp(0.0, sh - 1.0);
+                let sy0 = sy as u32;
+                let sy1 = (sy0 + 1).min(bg.height - 1);
+                let fy = ((sy - sy0 as f64) * 16.0 + round_bias)
+                    .floor()
+                    .clamp(0.0, 15.0) as u32;
+                for x in 0..w {
+                    let sx = ((x as f64 + 0.5) * sw / dw - 0.5).clamp(0.0, sw - 1.0);
+                    let sx0 = sx as u32;
+                    let sx1 = (sx0 + 1).min(bg.width - 1);
+                    let fx = ((sx - sx0 as f64) * 16.0 + round_bias)
+                        .floor()
+                        .clamp(0.0, 15.0) as u32;
+                    let (r00, g00, b00) = bg.get_rgb(sx0, sy0);
+                    let (r10, g10, b10) = bg.get_rgb(sx1, sy0);
+                    let (r01, g01, b01) = bg.get_rgb(sx0, sy1);
+                    let (r11, g11, b11) = bg.get_rgb(sx1, sy1);
+                    let interp_h = |v0: u8, v1: u8| -> u32 {
+                        ((v0 as u32 * (16 - fx) + v1 as u32 * fx + 8) >> 4).clamp(0, 255)
+                    };
+                    let interp_v = |v0: u32, v1: u32| -> u8 {
+                        ((v0 * (16 - fy) + v1 * fy + 8) >> 4).clamp(0, 255) as u8
+                    };
+                    out.set_rgb(
+                        x,
+                        y,
+                        interp_v(interp_h(r00, r10), interp_h(r01, r11)),
+                        interp_v(interp_h(g00, g10), interp_h(g01, g11)),
+                        interp_v(interp_h(b00, b10), interp_h(b01, b11)),
+                    );
+                }
+            }
+
+            let stats = diff_stats(&out.to_ppm(), &expected);
+            eprintln!(
+                "carte bg frac16 {} bytes={} pixels={} mean_abs_rgb=({:.4},{:.4},{:.4}) max_abs_rgb=({},{},{})",
+                label,
+                stats.byte_mismatches,
+                stats.pixel_mismatches,
+                stats.sum_abs_r as f64 / stats.pixel_count as f64,
+                stats.sum_abs_g as f64 / stats.pixel_count as f64,
+                stats.sum_abs_b as f64 / stats.pixel_count as f64,
+                stats.max_abs_r,
+                stats.max_abs_g,
+                stats.max_abs_b,
+            );
+        }
+    }
+
+    #[test]
+    fn debug_bg_fraction_bits_sweep() {
+        let cases = [
+            (
+                "carte.djvu",
+                0usize,
+                "/tmp/rdjvu_debug/carte_bg.ppm",
+                "carte",
+            ),
+            (
+                "colorbook.djvu",
+                0usize,
+                "/tmp/rdjvu_debug/colorbook_p1_bg.ppm",
+                "colorbook",
+            ),
+            (
+                "navm_fgbz.djvu",
+                3usize,
+                "/tmp/rdjvu_debug/navm_p4_bg.ppm",
+                "navm_p4",
+            ),
+        ];
+
+        for bits in 4u32..=8 {
+            let scale = (1u32 << bits) as f64;
+            for (file, page_idx, ref_path, tag) in cases {
+                let rp = std::path::Path::new(ref_path);
+                if !rp.exists() {
+                    continue;
+                }
+                let expected = std::fs::read(rp).unwrap();
+                let data = std::fs::read(assets_path().join(file)).unwrap();
+                let doc = Document::parse(&data).unwrap();
+                let page = doc.page(page_idx).unwrap();
+                let bg = page.decode_background().unwrap().unwrap();
+                let w = page.info.width as u32;
+                let h = page.info.height as u32;
+                let sw = bg.width as f64;
+                let sh = bg.height as f64;
+                let dw = w as f64;
+                let dh = h as f64;
+                let denom = 1u32 << bits;
+                let half = 1u32 << (bits - 1);
+
+                let mut out = Pixmap::white(w, h);
+                for y in 0..h {
+                    let sy = ((y as f64 + 0.5) * sh / dh - 0.5).clamp(0.0, sh - 1.0);
+                    let sy0 = sy as u32;
+                    let sy1 = (sy0 + 1).min(bg.height - 1);
+                    let fy = ((sy - sy0 as f64) * scale + 0.5)
+                        .floor()
+                        .clamp(0.0, (denom - 1) as f64) as u32;
+                    for x in 0..w {
+                        let sx = ((x as f64 + 0.5) * sw / dw - 0.5).clamp(0.0, sw - 1.0);
+                        let sx0 = sx as u32;
+                        let sx1 = (sx0 + 1).min(bg.width - 1);
+                        let fx = ((sx - sx0 as f64) * scale + 0.5)
+                            .floor()
+                            .clamp(0.0, (denom - 1) as f64) as u32;
+                        let (r00, g00, b00) = bg.get_rgb(sx0, sy0);
+                        let (r10, g10, b10) = bg.get_rgb(sx1, sy0);
+                        let (r01, g01, b01) = bg.get_rgb(sx0, sy1);
+                        let (r11, g11, b11) = bg.get_rgb(sx1, sy1);
+                        let interp_h = |v0: u8, v1: u8| -> u32 {
+                            ((v0 as u32 * (denom - fx) + v1 as u32 * fx + half) >> bits)
+                                .clamp(0, 255)
+                        };
+                        let interp_v = |v0: u32, v1: u32| -> u8 {
+                            ((v0 * (denom - fy) + v1 * fy + half) >> bits).clamp(0, 255) as u8
+                        };
+                        out.set_rgb(
+                            x,
+                            y,
+                            interp_v(interp_h(r00, r10), interp_h(r01, r11)),
+                            interp_v(interp_h(g00, g10), interp_h(g01, g11)),
+                            interp_v(interp_h(b00, b10), interp_h(b01, b11)),
+                        );
+                    }
+                }
+
+                let stats = diff_stats(&out.to_ppm(), &expected);
+                eprintln!(
+                    "{} frac_bits={} bytes={} pixels={}",
+                    tag, bits, stats.byte_mismatches, stats.pixel_mismatches
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn debug_carte_bg_mod3_profile() {
+        let ref_path = std::path::Path::new("/tmp/rdjvu_debug/carte_bg.ppm");
+        if !ref_path.exists() {
+            return;
+        }
+        let expected = std::fs::read(ref_path).unwrap();
+        let data = std::fs::read(assets_path().join("carte.djvu")).unwrap();
+        let doc = Document::parse(&data).unwrap();
+        let page = doc.page(0).unwrap();
+        let bg = page.decode_background().unwrap().unwrap();
+        let w = page.info.width as u32;
+        let h = page.info.height as u32;
+        let actual = composite_bg_only(w, h, &bg, w, h).to_ppm();
+        let a = &actual[ppm_header_end(&actual)..];
+        let e = &expected[ppm_header_end(&expected)..];
+
+        let mut phase = [[0usize; 3]; 3];
+        for y in 0..h as usize {
+            for x in 0..w as usize {
+                let i = (y * w as usize + x) * 3;
+                if a[i] != e[i] || a[i + 1] != e[i + 1] || a[i + 2] != e[i + 2] {
+                    phase[y % 3][x % 3] += 1;
+                }
+            }
+        }
+
+        for y in 0..3 {
+            eprintln!(
+                "carte bg mod3 row{} = [{}, {}, {}]",
+                y, phase[y][0], phase[y][1], phase[y][2]
+            );
+        }
+    }
+
+    #[test]
+    fn debug_carte_bg_vertical_phase_flip_candidate() {
+        let ref_path = std::path::Path::new("/tmp/rdjvu_debug/carte_bg.ppm");
+        if !ref_path.exists() {
+            return;
+        }
+        let expected = std::fs::read(ref_path).unwrap();
+        let data = std::fs::read(assets_path().join("carte.djvu")).unwrap();
+        let doc = Document::parse(&data).unwrap();
+        let page = doc.page(0).unwrap();
+        let bg = page.decode_background().unwrap().unwrap();
+        let w = page.info.width as u32;
+        let h = page.info.height as u32;
+        let sw = bg.width as f64;
+        let sh = bg.height as f64;
+        let dw = w as f64;
+        let dh = h as f64;
+        let mut out = Pixmap::white(w, h);
+
+        for y in 0..h {
+            let py = h - 1 - y;
+            let sy_bottom = ((py as f64 + 0.5) * sh / dh - 0.5).clamp(0.0, sh - 1.0);
+            let sy = (sh - 1.0 - sy_bottom).clamp(0.0, sh - 1.0);
+            let sy0 = sy as u32;
+            let sy1 = (sy0 + 1).min(bg.height - 1);
+            let fy = ((sy - sy0 as f64) * 16.0 + 0.5).floor().clamp(0.0, 15.0) as u32;
+            for x in 0..w {
+                let sx = ((x as f64 + 0.5) * sw / dw - 0.5).clamp(0.0, sw - 1.0);
+                let sx0 = sx as u32;
+                let sx1 = (sx0 + 1).min(bg.width - 1);
+                let fx = ((sx - sx0 as f64) * 16.0 + 0.5).floor().clamp(0.0, 15.0) as u32;
+                let (r00, g00, b00) = bg.get_rgb(sx0, sy0);
+                let (r10, g10, b10) = bg.get_rgb(sx1, sy0);
+                let (r01, g01, b01) = bg.get_rgb(sx0, sy1);
+                let (r11, g11, b11) = bg.get_rgb(sx1, sy1);
+                let interp_h = |v0: u8, v1: u8| -> u32 {
+                    ((v0 as u32 * (16 - fx) + v1 as u32 * fx + 8) >> 4).clamp(0, 255)
+                };
+                let interp_v = |v0: u32, v1: u32| -> u8 {
+                    ((v0 * (16 - fy) + v1 * fy + 8) >> 4).clamp(0, 255) as u8
+                };
+                out.set_rgb(
+                    x,
+                    y,
+                    interp_v(interp_h(r00, r10), interp_h(r01, r11)),
+                    interp_v(interp_h(g00, g10), interp_h(g01, g11)),
+                    interp_v(interp_h(b00, b10), interp_h(b01, b11)),
+                );
+            }
+        }
+
+        let stats = diff_stats(&out.to_ppm(), &expected);
+        eprintln!(
+            "carte bg vertical_phase_flip bytes={} pixels={} mean_abs_rgb=({:.4},{:.4},{:.4}) max_abs_rgb=({},{},{})",
+            stats.byte_mismatches,
+            stats.pixel_mismatches,
+            stats.sum_abs_r as f64 / stats.pixel_count as f64,
+            stats.sum_abs_g as f64 / stats.pixel_count as f64,
+            stats.sum_abs_b as f64 / stats.pixel_count as f64,
+            stats.max_abs_r,
+            stats.max_abs_g,
+            stats.max_abs_b,
+        );
+    }
+
+    #[test]
     fn debug_colorbook_bg_scaler_candidates() {
         let ref_path = std::path::Path::new("/tmp/rdjvu_debug/colorbook_p1_bg.ppm");
         if !ref_path.exists() {
@@ -973,8 +1499,18 @@ mod tests {
             }
             let actual = out.to_ppm();
             let header_end = actual.iter().position(|&b| b == b'\n').unwrap() + 1;
-            let header_end = header_end + actual[header_end..].iter().position(|&b| b == b'\n').unwrap() + 1;
-            let header_end = header_end + actual[header_end..].iter().position(|&b| b == b'\n').unwrap() + 1;
+            let header_end = header_end
+                + actual[header_end..]
+                    .iter()
+                    .position(|&b| b == b'\n')
+                    .unwrap()
+                + 1;
+            let header_end = header_end
+                + actual[header_end..]
+                    .iter()
+                    .position(|&b| b == b'\n')
+                    .unwrap()
+                + 1;
             let a = &actual[header_end..];
             let e = &expected[header_end..];
             let px = (a.len().min(e.len())) / 3;
@@ -994,7 +1530,9 @@ mod tests {
             let sy = (y / scale).min(bg.height - 1);
             bg.get_rgb(sx, sy)
         });
-        compare("bilinear_round_scale", &|x, y| sample_bilinear(&bg, x, y, w, h));
+        compare("bilinear_round_scale", &|x, y| {
+            sample_bilinear(&bg, x, y, w, h)
+        });
 
         compare("nearest_true_dims", &|x, y| {
             let sx = ((x as u64 * bg.width as u64) / w as u64) as u32;
@@ -1033,7 +1571,9 @@ mod tests {
             )
         });
 
-        let scale = ((w + bg.width - 1) / bg.width).max((h + bg.height - 1) / bg.height).max(1);
+        let scale = ((w + bg.width - 1) / bg.width)
+            .max((h + bg.height - 1) / bg.height)
+            .max(1);
         let eff_w = (w / scale).max(1);
         let eff_h = (h / scale).max(1);
         let virt_w = eff_w * scale;
@@ -1160,8 +1700,16 @@ mod tests {
                     (cy * sh / dh).clamp(0.0, sh - 1.0),
                 ),
                 "edge" => (
-                    if virt_w > 1 { (cx * (sw - 1.0) / (dw - 1.0)).clamp(0.0, sw - 1.0) } else { 0.0 },
-                    if virt_h > 1 { (cy * (sh - 1.0) / (dh - 1.0)).clamp(0.0, sh - 1.0) } else { 0.0 },
+                    if virt_w > 1 {
+                        (cx * (sw - 1.0) / (dw - 1.0)).clamp(0.0, sw - 1.0)
+                    } else {
+                        0.0
+                    },
+                    if virt_h > 1 {
+                        (cy * (sh - 1.0) / (dh - 1.0)).clamp(0.0, sh - 1.0)
+                    } else {
+                        0.0
+                    },
                 ),
                 _ => unreachable!(),
             };
@@ -1269,8 +1817,18 @@ mod tests {
             }
             let actual = out.to_ppm();
             let header_end = actual.iter().position(|&b| b == b'\n').unwrap() + 1;
-            let header_end = header_end + actual[header_end..].iter().position(|&b| b == b'\n').unwrap() + 1;
-            let header_end = header_end + actual[header_end..].iter().position(|&b| b == b'\n').unwrap() + 1;
+            let header_end = header_end
+                + actual[header_end..]
+                    .iter()
+                    .position(|&b| b == b'\n')
+                    .unwrap()
+                + 1;
+            let header_end = header_end
+                + actual[header_end..]
+                    .iter()
+                    .position(|&b| b == b'\n')
+                    .unwrap()
+                + 1;
             let a = &actual[header_end..];
             let e = &expected[header_end..];
             let px = (a.len().min(e.len())) / 3;
@@ -1290,7 +1848,9 @@ mod tests {
             let sy = (y / scale).min(fg.height - 1);
             fg.get_rgb(sx, sy)
         });
-        compare("bilinear_round_scale", &|x, y| sample_bilinear(&fg, x, y, w, h));
+        compare("bilinear_round_scale", &|x, y| {
+            sample_bilinear(&fg, x, y, w, h)
+        });
 
         compare("nearest_true_dims", &|x, y| {
             let sx = ((x as u64 * fg.width as u64) / w as u64) as u32;
@@ -1298,7 +1858,8 @@ mod tests {
             fg.get_rgb(sx.min(fg.width - 1), sy.min(fg.height - 1))
         });
 
-        let (reduction, virt_w, virt_h, virt_page_w, virt_page_h) = layer_virtual_geometry(&fg, w, h);
+        let (reduction, virt_w, virt_h, virt_page_w, virt_page_h) =
+            layer_virtual_geometry(&fg, w, h);
         compare("nearest_virtual_floor3", &|x, y| {
             let px = x.min(virt_page_w - 1);
             let py = y.min(virt_page_h - 1);
@@ -1310,13 +1871,19 @@ mod tests {
         compare("nearest_virtual_true_dims", &|x, y| {
             let sx = ((x as u64 * virt_w as u64) / w as u64) as u32;
             let sy = ((y as u64 * virt_h as u64) / h as u64) as u32;
-            fg.get_rgb(sx.min(virt_w - 1).min(fg.width - 1), sy.min(virt_h - 1).min(fg.height - 1))
+            fg.get_rgb(
+                sx.min(virt_w - 1).min(fg.width - 1),
+                sy.min(virt_h - 1).min(fg.height - 1),
+            )
         });
 
         compare("nearest_virtual_true_dims_center", &|x, y| {
             let sx = (((2 * x as u64 + 1) * virt_w as u64) / (2 * w as u64)) as u32;
             let sy = (((2 * y as u64 + 1) * virt_h as u64) / (2 * h as u64)) as u32;
-            fg.get_rgb(sx.min(virt_w - 1).min(fg.width - 1), sy.min(virt_h - 1).min(fg.height - 1))
+            fg.get_rgb(
+                sx.min(virt_w - 1).min(fg.width - 1),
+                sy.min(virt_h - 1).min(fg.height - 1),
+            )
         });
 
         for x_shift in 0..reduction.min(3) {
@@ -1386,7 +1953,8 @@ mod tests {
         let fg = page.decode_foreground().unwrap().unwrap();
         let w = page.info.width as u32;
         let h = page.info.height as u32;
-        let (reduction, virt_w, virt_h, virt_page_w, virt_page_h) = layer_virtual_geometry(&fg, w, h);
+        let (reduction, virt_w, virt_h, virt_page_w, virt_page_h) =
+            layer_virtual_geometry(&fg, w, h);
 
         let compare = |name: &str, x_shift: u32, y_shift: u32| {
             let mut out = Pixmap::white(w, h);
@@ -1407,9 +1975,7 @@ mod tests {
             let stats = diff_stats(&out.to_ppm(), &expected);
             eprintln!(
                 "carte fg shift {} byte_mismatch={} pixel_mismatch={}",
-                name,
-                stats.byte_mismatches,
-                stats.pixel_mismatches,
+                name, stats.byte_mismatches, stats.pixel_mismatches,
             );
         };
 
@@ -1452,7 +2018,9 @@ mod tests {
         }
 
         let sum_range = |vals: &[usize], start: usize, end: usize| -> usize {
-            vals[start.min(vals.len())..end.min(vals.len())].iter().sum()
+            vals[start.min(vals.len())..end.min(vals.len())]
+                .iter()
+                .sum()
         };
         let max_col = col_diff.iter().enumerate().max_by_key(|(_, v)| *v).unwrap();
         let max_row = row_diff.iter().enumerate().max_by_key(|(_, v)| *v).unwrap();
@@ -1486,38 +2054,39 @@ mod tests {
         let w = page.info.width as u32;
         let h = page.info.height as u32;
 
-        let sample_plane = |plane: &[i16], src_w: u32, src_h: u32, page_x: u32, page_y: u32| -> i32 {
-            let (_reduction, virt_w, virt_h, virt_page_w, virt_page_h) = {
-                let red_w = (w + src_w - 1) / src_w;
-                let red_h = (h + src_h - 1) / src_h;
-                let reduction = red_w.max(red_h).max(1);
-                let virt_w = (w / reduction).max(1);
-                let virt_h = (h / reduction).max(1);
-                let virt_page_w = virt_w * reduction;
-                let virt_page_h = virt_h * reduction;
-                (reduction, virt_w, virt_h, virt_page_w, virt_page_h)
+        let sample_plane =
+            |plane: &[i16], src_w: u32, src_h: u32, page_x: u32, page_y: u32| -> i32 {
+                let (_reduction, virt_w, virt_h, virt_page_w, virt_page_h) = {
+                    let red_w = (w + src_w - 1) / src_w;
+                    let red_h = (h + src_h - 1) / src_h;
+                    let reduction = red_w.max(red_h).max(1);
+                    let virt_w = (w / reduction).max(1);
+                    let virt_h = (h / reduction).max(1);
+                    let virt_page_w = virt_w * reduction;
+                    let virt_page_h = virt_h * reduction;
+                    (reduction, virt_w, virt_h, virt_page_w, virt_page_h)
+                };
+                let sw = virt_w as f64;
+                let sh = virt_h as f64;
+                let dw = virt_page_w as f64;
+                let dh = virt_page_h as f64;
+                let px = page_x.min(virt_page_w - 1);
+                let py = page_y.min(virt_page_h - 1);
+                let sx = ((px as f64 + 0.5) * sw / dw - 0.5).clamp(0.0, sw - 1.0);
+                let sy = ((py as f64 + 0.5) * sh / dh - 0.5).clamp(0.0, sh - 1.0);
+                let sx0 = sx as u32;
+                let sy0 = sy as u32;
+                let sx1 = (sx0 + 1).min(virt_w.saturating_sub(1)).min(src_w - 1);
+                let sy1 = (sy0 + 1).min(virt_h.saturating_sub(1)).min(src_h - 1);
+                let fx = sx - sx0 as f64;
+                let fy = sy - sy0 as f64;
+                let get = |x: u32, y: u32| plane[(y * src_w + x) as usize] as f64;
+                let v = get(sx0.min(src_w - 1), sy0.min(src_h - 1)) * (1.0 - fx) * (1.0 - fy)
+                    + get(sx1, sy0.min(src_h - 1)) * fx * (1.0 - fy)
+                    + get(sx0.min(src_w - 1), sy1) * (1.0 - fx) * fy
+                    + get(sx1, sy1) * fx * fy;
+                v.round() as i32
             };
-            let sw = virt_w as f64;
-            let sh = virt_h as f64;
-            let dw = virt_page_w as f64;
-            let dh = virt_page_h as f64;
-            let px = page_x.min(virt_page_w - 1);
-            let py = page_y.min(virt_page_h - 1);
-            let sx = ((px as f64 + 0.5) * sw / dw - 0.5).clamp(0.0, sw - 1.0);
-            let sy = ((py as f64 + 0.5) * sh / dh - 0.5).clamp(0.0, sh - 1.0);
-            let sx0 = sx as u32;
-            let sy0 = sy as u32;
-            let sx1 = (sx0 + 1).min(virt_w.saturating_sub(1)).min(src_w - 1);
-            let sy1 = (sy0 + 1).min(virt_h.saturating_sub(1)).min(src_h - 1);
-            let fx = sx - sx0 as f64;
-            let fy = sy - sy0 as f64;
-            let get = |x: u32, y: u32| plane[(y * src_w + x) as usize] as f64;
-            let v = get(sx0.min(src_w - 1), sy0.min(src_h - 1)) * (1.0 - fx) * (1.0 - fy)
-                + get(sx1, sy0.min(src_h - 1)) * fx * (1.0 - fy)
-                + get(sx0.min(src_w - 1), sy1) * (1.0 - fx) * fy
-                + get(sx1, sy1) * fx * fy;
-            v.round() as i32
-        };
 
         let mut out = Pixmap::white(w, h);
         let cb = planes.cb.as_ref().unwrap();
@@ -1610,7 +2179,9 @@ mod tests {
         }
 
         best.sort_unstable();
-        for (rank, (byte_mismatches, pixel_mismatches, step)) in best.into_iter().take(10).enumerate() {
+        for (rank, (byte_mismatches, pixel_mismatches, step)) in
+            best.into_iter().take(10).enumerate()
+        {
             eprintln!(
                 "colorbook bg xphase rank={} step={} phase={:.4} byte_mismatch={} pixel_mismatch={}",
                 rank + 1,
@@ -1657,7 +2228,9 @@ mod tests {
             );
         };
 
-        compare("current_float", &|x, y| sample_bilinear_virtual(&bg, x, y, w, h));
+        compare("current_float", &|x, y| {
+            sample_bilinear_virtual(&bg, x, y, w, h)
+        });
 
         compare("fixed16_direct", &|x, y| {
             let sw = virt_w as i64;
@@ -1748,9 +2321,8 @@ mod tests {
             let interp_h = |v0: u8, v1: u8| -> u32 {
                 ((v0 as u32 * (256 - fx) + v1 as u32 * fx) >> 8).clamp(0, 255)
             };
-            let interp_v = |v0: u32, v1: u32| -> u8 {
-                ((v0 * (256 - fy) + v1 * fy) >> 8).clamp(0, 255) as u8
-            };
+            let interp_v =
+                |v0: u32, v1: u32| -> u8 { ((v0 * (256 - fy) + v1 * fy) >> 8).clamp(0, 255) as u8 };
             let (r00, g00, b00) = bg.get_rgb(sx0.min(bg.width - 1), sy0.min(bg.height - 1));
             let (r10, g10, b10) = bg.get_rgb(sx1, sy0.min(bg.height - 1));
             let (r01, g01, b01) = bg.get_rgb(sx0.min(bg.width - 1), sy1);
@@ -1793,11 +2365,23 @@ mod tests {
                 let dr = (a[i] as i16 - e[i] as i16).unsigned_abs() as u8;
                 let dg = (a[i + 1] as i16 - e[i + 1] as i16).unsigned_abs() as u8;
                 let db = (a[i + 2] as i16 - e[i + 2] as i16).unsigned_abs() as u8;
-                let is_fg = x < mask.width as usize && y < mask.height as usize && mask.get(x as u32, y as u32);
+                let is_fg = x < mask.width as usize
+                    && y < mask.height as usize
+                    && mask.get(x as u32, y as u32);
                 let (pixels, pixel_mismatches, byte_mismatches, sum_abs) = if is_fg {
-                    (&mut fg_pixels, &mut fg_pixel_mismatches, &mut fg_byte_mismatches, &mut fg_sum_abs)
+                    (
+                        &mut fg_pixels,
+                        &mut fg_pixel_mismatches,
+                        &mut fg_byte_mismatches,
+                        &mut fg_sum_abs,
+                    )
                 } else {
-                    (&mut bg_pixels, &mut bg_pixel_mismatches, &mut bg_byte_mismatches, &mut bg_sum_abs)
+                    (
+                        &mut bg_pixels,
+                        &mut bg_pixel_mismatches,
+                        &mut bg_byte_mismatches,
+                        &mut bg_sum_abs,
+                    )
                 };
                 *pixels += 1;
                 if dr != 0 || dg != 0 || db != 0 {
@@ -1850,7 +2434,8 @@ mod tests {
         let fg = page.decode_foreground().unwrap().unwrap();
         let w = page.info.width as u32;
         let h = page.info.height as u32;
-        let (reduction, virt_w, virt_h, virt_page_w, virt_page_h) = layer_virtual_geometry(&fg, w, h);
+        let (reduction, virt_w, virt_h, virt_page_w, virt_page_h) =
+            layer_virtual_geometry(&fg, w, h);
 
         let compare = |name: &str, x_shift: u32, y_shift: u32| {
             let mut out = Pixmap::white(w, h);
@@ -1872,9 +2457,7 @@ mod tests {
             let stats = diff_stats(&out.to_ppm(), &expected);
             eprintln!(
                 "colorbook full fg shift {} byte_mismatch={} pixel_mismatch={}",
-                name,
-                stats.byte_mismatches,
-                stats.pixel_mismatches,
+                name, stats.byte_mismatches, stats.pixel_mismatches,
             );
         };
 
@@ -1899,7 +2482,8 @@ mod tests {
         let fg = page.decode_foreground().unwrap().unwrap();
         let w = page.info.width as u32;
         let h = page.info.height as u32;
-        let (reduction, virt_w, virt_h, virt_page_w, virt_page_h) = layer_virtual_geometry(&fg, w, h);
+        let (reduction, virt_w, virt_h, virt_page_w, virt_page_h) =
+            layer_virtual_geometry(&fg, w, h);
         let mut best = Vec::new();
 
         for x_shift in 0..reduction {
@@ -1920,12 +2504,19 @@ mod tests {
                     }
                 }
                 let stats = diff_stats(&out.to_ppm(), &expected);
-                best.push((stats.pixel_mismatches, stats.byte_mismatches, x_shift, y_shift));
+                best.push((
+                    stats.pixel_mismatches,
+                    stats.byte_mismatches,
+                    x_shift,
+                    y_shift,
+                ));
             }
         }
 
         best.sort_unstable();
-        for (rank, (pixel_mismatches, byte_mismatches, x_shift, y_shift)) in best.into_iter().take(10).enumerate() {
+        for (rank, (pixel_mismatches, byte_mismatches, x_shift, y_shift)) in
+            best.into_iter().take(10).enumerate()
+        {
             eprintln!(
                 "colorbook fg search rank={} shift=({}, {}) pixel_mismatch={} byte_mismatch={}",
                 rank + 1,
