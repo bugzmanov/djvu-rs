@@ -5,6 +5,14 @@ use rdjvu_jb2::JB2Dict;
 
 pub use rdjvu_iw44::NormalizedPlanes;
 
+/// A bookmark entry from the NAVM chunk (table of contents).
+#[derive(Debug, Clone)]
+pub struct Bookmark {
+    pub title: String,
+    pub url: String,
+    pub children: Vec<Bookmark>,
+}
+
 /// Rotation values from INFO chunk flags.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Rotation {
@@ -129,6 +137,35 @@ impl<'a> Document<'a> {
 
         forms.get(dirm_index).copied()
             .ok_or(Error::FormatError(format!("component {} not found", dirm_index)))
+    }
+
+    /// Parse the NAVM bookmarks (table of contents).
+    ///
+    /// Returns an empty Vec if there is no NAVM chunk.
+    pub fn bookmarks(&self) -> Result<Vec<Bookmark>, Error> {
+        let navm_data = match self.file.root.find_first(b"NAVM") {
+            Some(c) => c.data(),
+            None => return Ok(vec![]),
+        };
+
+        let decoded = rdjvu_bzz::decode(navm_data)
+            .map_err(|e| Error::FormatError(format!("NAVM BZZ decode: {}", e)))?;
+
+        if decoded.len() < 2 {
+            return Ok(vec![]);
+        }
+
+        let total_count = u16::from_be_bytes([decoded[0], decoded[1]]) as usize;
+        let mut pos = 2usize;
+        let mut bookmarks = Vec::new();
+        let mut decoded_count = 0usize;
+
+        while decoded_count < total_count {
+            let bm = parse_bookmark(&decoded, &mut pos, &mut decoded_count)?;
+            bookmarks.push(bm);
+        }
+
+        Ok(bookmarks)
     }
 
     /// Resolve an INCL reference to a shared DJVI component's children.
@@ -476,6 +513,47 @@ fn parse_fgbz(data: &[u8]) -> Result<Palette, Error> {
     Ok(Palette { colors, indices })
 }
 
+// ============================================================
+// NAVM bookmark parser
+// ============================================================
+
+fn parse_bookmark(data: &[u8], pos: &mut usize, counter: &mut usize) -> Result<Bookmark, Error> {
+    if *pos >= data.len() {
+        return Err(Error::UnexpectedEof);
+    }
+    let children_count = data[*pos] as usize;
+    *pos += 1;
+
+    let title = read_navm_string(data, pos)?;
+    let url = read_navm_string(data, pos)?;
+    *counter += 1;
+
+    let mut children = Vec::with_capacity(children_count);
+    for _ in 0..children_count {
+        children.push(parse_bookmark(data, pos, counter)?);
+    }
+
+    Ok(Bookmark { title, url, children })
+}
+
+fn read_navm_string(data: &[u8], pos: &mut usize) -> Result<String, Error> {
+    if *pos + 3 > data.len() {
+        return Err(Error::UnexpectedEof);
+    }
+    let len = ((data[*pos] as usize) << 16)
+        | ((data[*pos + 1] as usize) << 8)
+        | (data[*pos + 2] as usize);
+    *pos += 3;
+
+    if *pos + len > data.len() {
+        return Err(Error::UnexpectedEof);
+    }
+    let s = std::str::from_utf8(&data[*pos..*pos + len])
+        .map_err(|_| Error::FormatError("invalid UTF-8 in NAVM bookmark".into()))?;
+    *pos += len;
+    Ok(s.to_string())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -672,6 +750,52 @@ mod tests {
                 e.len() / 3
             );
         }
+    }
+
+    #[test]
+    fn bookmarks_navm_fgbz() {
+        let data = std::fs::read(assets_path().join("navm_fgbz.djvu")).unwrap();
+        let doc = Document::parse(&data).unwrap();
+        let bm = doc.bookmarks().unwrap();
+
+        // 4 top-level bookmarks
+        assert_eq!(bm.len(), 4);
+
+        assert_eq!(bm[0].title, "Links");
+        assert_eq!(bm[0].url, "#1");
+        assert!(bm[0].children.is_empty());
+
+        assert_eq!(bm[1].title, "Ink, Rectangles, Ellipses, Lines");
+        assert_eq!(bm[1].url, "#2");
+        assert!(bm[1].children.is_empty());
+
+        assert_eq!(bm[2].title, "Stamps");
+        assert_eq!(bm[2].url, "#3");
+        assert_eq!(bm[2].children.len(), 2);
+        assert_eq!(bm[2].children[0].title, "Stamps - Faces");
+        assert_eq!(bm[2].children[0].url, "#4");
+        assert_eq!(bm[2].children[1].title, "Stamps - Pointers");
+        assert_eq!(bm[2].children[1].url, "#5");
+
+        assert_eq!(bm[3].title, "Last Page");
+        assert_eq!(bm[3].url, "#6");
+        assert!(bm[3].children.is_empty());
+    }
+
+    #[test]
+    fn bookmarks_empty_for_single_page() {
+        let data = std::fs::read(assets_path().join("boy_jb2.djvu")).unwrap();
+        let doc = Document::parse(&data).unwrap();
+        let bm = doc.bookmarks().unwrap();
+        assert!(bm.is_empty());
+    }
+
+    #[test]
+    fn bookmarks_empty_for_no_navm() {
+        let data = std::fs::read(assets_path().join("colorbook.djvu")).unwrap();
+        let doc = Document::parse(&data).unwrap();
+        let bm = doc.bookmarks().unwrap();
+        assert!(bm.is_empty());
     }
 
     // --- Phase 6.2: Edge case tests ---

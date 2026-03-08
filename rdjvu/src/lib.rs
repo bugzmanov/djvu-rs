@@ -14,6 +14,7 @@
 //! ```
 
 pub use rdjvu_core::{Bitmap, Error, Pixmap};
+pub use rdjvu_document::Bookmark;
 
 /// A parsed DjVu document. Owns its data and the parsed structure.
 ///
@@ -47,6 +48,11 @@ impl Document {
             unsafe { std::slice::from_raw_parts(data.as_ptr(), data.len()) };
         let parsed = rdjvu_document::Document::parse(stable_ref)?;
         Ok(Document { parsed, _data: data })
+    }
+
+    /// Parse the NAVM bookmarks (table of contents).
+    pub fn bookmarks(&self) -> Result<Vec<Bookmark>, Error> {
+        self.parsed.bookmarks()
     }
 
     /// Number of pages.
@@ -377,6 +383,21 @@ mod tests {
         let page = doc.page(0).unwrap();
         let pm = page.render().unwrap();
         assert!(pm.width > 0 && pm.height > 0);
+    }
+
+    #[test]
+    fn bookmarks_navm_fgbz() {
+        let doc = Document::open(assets_path().join("navm_fgbz.djvu")).unwrap();
+        let bm = doc.bookmarks().unwrap();
+        assert_eq!(bm.len(), 4);
+        assert_eq!(bm[2].title, "Stamps");
+        assert_eq!(bm[2].children.len(), 2);
+    }
+
+    #[test]
+    fn bookmarks_empty_when_absent() {
+        let doc = Document::open(assets_path().join("boy_jb2.djvu")).unwrap();
+        assert!(doc.bookmarks().unwrap().is_empty());
     }
 
     #[test]
