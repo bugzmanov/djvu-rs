@@ -249,22 +249,19 @@ impl<'a> Page<'a> {
     }
 
     fn resolve_shared_dict(&self) -> Result<Option<JB2Dict>, Error> {
-        // First check for INCL → external DJVI component with Djbz
-        if let Some(incl) = self.form.find_first(b"INCL") {
+        // Check all INCL chunks for an external DJVI component with Djbz
+        for incl in self.form.find_all(b"INCL") {
             let ref_id = std::str::from_utf8(incl.data())
                 .map_err(|_| Error::FormatError("invalid INCL UTF-8".into()))?
                 .trim_end_matches('\0')
                 .trim();
 
             let shared_form = self.doc.resolve_incl(ref_id)?;
-            let djbz = match shared_form.find_first(b"Djbz") {
-                Some(c) => c.data(),
-                None => return Err(Error::MissingChunk("Djbz in shared component")),
-            };
-
-            let dict = rdjvu_jb2::decode_dict(djbz, None)
-                .map_err(|e| Error::FormatError(e.to_string()))?;
-            return Ok(Some(dict));
+            if let Some(djbz) = shared_form.find_first(b"Djbz") {
+                let dict = rdjvu_jb2::decode_dict(djbz.data(), None)
+                    .map_err(|e| Error::FormatError(e.to_string()))?;
+                return Ok(Some(dict));
+            }
         }
 
         // Then check for inline Djbz in the same FORM as Sjbz
@@ -395,13 +392,9 @@ fn parse_dirm(data: &[u8]) -> Result<(Vec<DirmEntry>, bool), Error> {
         }
 
         let comp_type = match flags[i] & 0x3f {
-            0 => ComponentType::Shared,
             1 => ComponentType::Page,
             2 => ComponentType::Thumbnail,
-            t => return Err(Error::Unsupported(
-                // Use a static message since we can't format dynamic values into &'static str
-                if t <= 63 { "unknown DIRM component type" } else { "unknown DIRM component type" }
-            )),
+            _ => ComponentType::Shared,
         };
 
         entries.push(DirmEntry { comp_type, id });

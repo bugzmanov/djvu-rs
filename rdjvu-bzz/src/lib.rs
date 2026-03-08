@@ -10,13 +10,14 @@ const NUM_CONTEXTS: usize = 300;
 pub fn decode(data: &[u8]) -> Result<Vec<u8>, &'static str> {
     let mut zp = ZPDecoder::new(data);
     let mut output = Vec::new();
+    let mut ctx = [0u8; NUM_CONTEXTS];
 
     loop {
         let size = decode_raw(&mut zp, 24);
         if size == 0 {
             break;
         }
-        let block = decode_block(&mut zp, size as usize)?;
+        let block = decode_block(&mut zp, &mut ctx, size as usize)?;
         output.extend_from_slice(&block);
     }
 
@@ -48,7 +49,7 @@ fn decode_binary(zp: &mut ZPDecoder, ctx: &mut [u8], ctxoff: usize, bits: u32) -
 }
 
 /// Decode a single BZZ block.
-fn decode_block(zp: &mut ZPDecoder, size: usize) -> Result<Vec<u8>, &'static str> {
+fn decode_block(zp: &mut ZPDecoder, ctx: &mut [u8; NUM_CONTEXTS], size: usize) -> Result<Vec<u8>, &'static str> {
     // Decode frequency shift (0, 1, or 2)
     let mut fshift: u32 = 0;
     if zp.decode_passthrough() {
@@ -58,8 +59,7 @@ fn decode_block(zp: &mut ZPDecoder, size: usize) -> Result<Vec<u8>, &'static str
         }
     }
 
-    // Initialize state
-    let mut ctx = [0u8; NUM_CONTEXTS];
+    // Initialize per-block state
     let mut mtf = [0u8; 256];
     for i in 0..256 {
         mtf[i] = i as u8;
@@ -94,49 +94,49 @@ fn decode_block(zp: &mut ZPDecoder, size: usize) -> Result<Vec<u8>, &'static str
             else {
                 ctxoff += CTXIDS;
                 if zp.decode(&mut ctx[ctxoff]) {
-                    mtfno = 2 + decode_binary(zp, &mut ctx, ctxoff + 1, 1);
+                    mtfno = 2 + decode_binary(zp, ctx, ctxoff + 1, 1);
                     data[i] = mtf[mtfno as usize];
                 }
                 // Level 3: mtfno in {4..7}?
                 else {
                     ctxoff += 2;
                     if zp.decode(&mut ctx[ctxoff]) {
-                        mtfno = 4 + decode_binary(zp, &mut ctx, ctxoff + 1, 2);
+                        mtfno = 4 + decode_binary(zp, ctx, ctxoff + 1, 2);
                         data[i] = mtf[mtfno as usize];
                     }
                     // Level 4: mtfno in {8..15}?
                     else {
                         ctxoff += 4;
                         if zp.decode(&mut ctx[ctxoff]) {
-                            mtfno = 8 + decode_binary(zp, &mut ctx, ctxoff + 1, 3);
+                            mtfno = 8 + decode_binary(zp, ctx, ctxoff + 1, 3);
                             data[i] = mtf[mtfno as usize];
                         }
                         // Level 5: mtfno in {16..31}?
                         else {
                             ctxoff += 8;
                             if zp.decode(&mut ctx[ctxoff]) {
-                                mtfno = 16 + decode_binary(zp, &mut ctx, ctxoff + 1, 4);
+                                mtfno = 16 + decode_binary(zp, ctx, ctxoff + 1, 4);
                                 data[i] = mtf[mtfno as usize];
                             }
                             // Level 6: mtfno in {32..63}?
                             else {
                                 ctxoff += 16;
                                 if zp.decode(&mut ctx[ctxoff]) {
-                                    mtfno = 32 + decode_binary(zp, &mut ctx, ctxoff + 1, 5);
+                                    mtfno = 32 + decode_binary(zp, ctx, ctxoff + 1, 5);
                                     data[i] = mtf[mtfno as usize];
                                 }
                                 // Level 7: mtfno in {64..127}?
                                 else {
                                     ctxoff += 32;
                                     if zp.decode(&mut ctx[ctxoff]) {
-                                        mtfno = 64 + decode_binary(zp, &mut ctx, ctxoff + 1, 6);
+                                        mtfno = 64 + decode_binary(zp, ctx, ctxoff + 1, 6);
                                         data[i] = mtf[mtfno as usize];
                                     }
                                     // Level 8: mtfno in {128..255}?
                                     else {
                                         ctxoff += 64;
                                         if zp.decode(&mut ctx[ctxoff]) {
-                                            mtfno = 128 + decode_binary(zp, &mut ctx, ctxoff + 1, 7);
+                                            mtfno = 128 + decode_binary(zp, ctx, ctxoff + 1, 7);
                                             data[i] = mtf[mtfno as usize];
                                         }
                                         // Level 9: marker (mtfno == 256)

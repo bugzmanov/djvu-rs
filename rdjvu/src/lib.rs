@@ -286,4 +286,106 @@ mod tests {
         assert_eq!(page.display_width(), h);
         assert_eq!(page.display_height(), w);
     }
+
+    #[test]
+    fn render_boy_jb2_rotate180() {
+        let doc = Document::open(assets_path().join("boy_jb2_rotate180.djvu")).unwrap();
+        let page = doc.page(0).unwrap();
+        // 180° keeps dimensions the same
+        assert_eq!(page.display_width(), page.width());
+        assert_eq!(page.display_height(), page.height());
+        let pm = page.render().unwrap();
+        assert!(pm.width > 0 && pm.height > 0);
+    }
+
+    #[test]
+    fn render_boy_jb2_rotate270() {
+        let doc = Document::open(assets_path().join("boy_jb2_rotate270.djvu")).unwrap();
+        let page = doc.page(0).unwrap();
+        // 270° swaps dimensions like 90°
+        assert_eq!(page.display_width(), page.height());
+        assert_eq!(page.display_height(), page.width());
+        let pm = page.render().unwrap();
+        assert!(pm.width > 0 && pm.height > 0);
+    }
+
+    #[test]
+    fn parse_ccitt2_empty_last_chunk() {
+        let doc = Document::open(assets_path().join("ccitt_2.djvu")).unwrap();
+        assert!(doc.page_count() >= 1);
+        let page = doc.page(0).unwrap();
+        let pm = page.render().unwrap();
+        assert!(pm.width > 0 && pm.height > 0);
+    }
+
+    #[test]
+    fn parse_links_minimal_file() {
+        let doc = Document::open(assets_path().join("links.djvu")).unwrap();
+        assert!(doc.page_count() >= 1);
+    }
+
+    #[test]
+    fn render_problem_page_jb2_edge_case() {
+        let doc = Document::open(assets_path().join("problem_page.djvu")).unwrap();
+        let page = doc.page(0).unwrap();
+        let pm = page.render().unwrap();
+        assert!(pm.width > 0 && pm.height > 0);
+    }
+
+    #[test]
+    fn render_vega_jb2_empty_edges() {
+        let doc = Document::open(assets_path().join("vega.djvu")).unwrap();
+        let page = doc.page(0).unwrap();
+        let pm = page.render().unwrap();
+        assert!(pm.width > 0 && pm.height > 0);
+    }
+
+    #[test]
+    fn render_malliavin_empty_page() {
+        let doc = Document::open(assets_path().join("malliavin.djvu")).unwrap();
+        // Page 6 (index 5) is reported as empty in djvujs
+        assert!(doc.page_count() >= 6);
+        // All pages should at least parse without panic
+        for i in 0..doc.page_count() {
+            let page = doc.page(i).unwrap();
+            let _ = page.render();
+        }
+    }
+
+    #[test]
+    fn parse_irish_multi_bzz() {
+        let doc = Document::open(assets_path().join("irish.djvu")).unwrap();
+        assert!(doc.page_count() >= 1);
+        let page = doc.page(0).unwrap();
+        let pm = page.render().unwrap();
+        assert!(pm.width > 0 && pm.height > 0);
+    }
+
+    #[test]
+    fn parse_czech_text_layer() {
+        let doc = Document::open(assets_path().join("czech.djvu")).unwrap();
+        assert!(doc.page_count() >= 7);
+        let page = doc.page(0).unwrap();
+        let pm = page.render().unwrap();
+        assert!(pm.width > 0 && pm.height > 0);
+    }
+
+    #[test]
+    fn parse_history_cyrillic_ids() {
+        let doc = Document::open(assets_path().join("history.djvu")).unwrap();
+        assert!(doc.page_count() >= 1);
+        let page = doc.page(0).unwrap();
+        let pm = page.render().unwrap();
+        assert!(pm.width > 0 && pm.height > 0);
+    }
+
+    #[test]
+    fn render_slow_large_document() {
+        let doc = Document::open(assets_path().join("slow.djvu")).unwrap();
+        assert!(doc.page_count() >= 1);
+        // Just render first page — this is a perf stress test
+        let page = doc.page(0).unwrap();
+        let pm = page.render().unwrap();
+        assert!(pm.width > 0 && pm.height > 0);
+    }
 }
