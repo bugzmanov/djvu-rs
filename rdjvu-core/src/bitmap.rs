@@ -63,6 +63,32 @@ impl Bitmap {
         self.data[byte_idx] |= 1 << bit_idx;
     }
 
+    /// Return a new bitmap with each black pixel expanded to its 4-connected
+    /// neighbors (1-pixel morphological dilation). Thickens every stroke by
+    /// ~2 pixels total, improving legibility at reduced display sizes.
+    pub fn dilate(&self) -> Bitmap {
+        let mut out = self.clone();
+        for y in 0..self.height {
+            for x in 0..self.width {
+                if self.get(x, y) {
+                    if x > 0 {
+                        out.set_black(x - 1, y);
+                    }
+                    if x + 1 < self.width {
+                        out.set_black(x + 1, y);
+                    }
+                    if y > 0 {
+                        out.set_black(x, y - 1);
+                    }
+                    if y + 1 < self.height {
+                        out.set_black(x, y + 1);
+                    }
+                }
+            }
+        }
+        out
+    }
+
     /// Encode as PBM (binary, P4 format).
     /// This is the format produced by `ddjvu -format=pbm`.
     pub fn to_pbm(&self) -> Vec<u8> {

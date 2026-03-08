@@ -125,6 +125,42 @@ impl<'a> Page<'a> {
         rdjvu_render::render_to_size(&page, width, height)
     }
 
+    /// Render the page at native resolution with mask dilation for bolder text.
+    ///
+    /// Each dilation pass thickens every stroke by ~1 pixel in each direction.
+    /// Typically 1 pass is enough for improved legibility at reduced display sizes.
+    pub fn render_bold(&self, dilate_passes: u32) -> Result<Pixmap, Error> {
+        let page = self.doc.parsed.page(self.index)?;
+        rdjvu_render::render_to_size_bold(
+            &page,
+            page.info.width as u32,
+            page.info.height as u32,
+            dilate_passes,
+        )
+    }
+
+    /// Render the page to a target size with mask dilation for bolder text.
+    pub fn render_to_size_bold(
+        &self,
+        width: u32,
+        height: u32,
+        dilate_passes: u32,
+    ) -> Result<Pixmap, Error> {
+        let page = self.doc.parsed.page(self.index)?;
+        rdjvu_render::render_to_size_bold(&page, width, height, dilate_passes)
+    }
+
+    /// Render the page at a target size with anti-aliased downscaling.
+    ///
+    /// Renders internally at native resolution, then box-downsamples to the
+    /// target size with a contrast curve that darkens anti-aliased edges.
+    /// `boldness` controls how aggressively edges are darkened:
+    /// 0.0 = neutral, 0.5 = moderate, 1.0 = strong.
+    pub fn render_aa(&self, width: u32, height: u32, boldness: f32) -> Result<Pixmap, Error> {
+        let page = self.doc.parsed.page(self.index)?;
+        rdjvu_render::render_aa(&page, width, height, boldness)
+    }
+
     /// Render the page scaled by a factor (e.g. 0.5 = half size, 2.0 = double).
     pub fn render_scaled(&self, scale: f32) -> Result<Pixmap, Error> {
         let dw = self.display_width();

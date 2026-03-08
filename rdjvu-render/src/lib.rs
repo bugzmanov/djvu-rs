@@ -11,15 +11,34 @@ pub fn render(page: &Page) -> Result<Pixmap, Error> {
 /// The target size is in pre-rotation coordinates (i.e. matching the page's
 /// native width/height orientation). Rotation is applied after compositing.
 pub fn render_to_size(page: &Page, w: u32, h: u32) -> Result<Pixmap, Error> {
+    render_to_size_inner(page, w, h, 0)
+}
+
+/// Like `render_to_size`, but applies morphological dilation to the mask
+/// bitmap `dilate_passes` times before compositing. Each pass thickens every
+/// black stroke by ~1 pixel in each direction, improving legibility when the
+/// page is displayed at reduced size.
+pub fn render_to_size_bold(page: &Page, w: u32, h: u32, dilate_passes: u32) -> Result<Pixmap, Error> {
+    render_to_size_inner(page, w, h, dilate_passes)
+}
+
+fn render_to_size_inner(page: &Page, w: u32, h: u32, dilate_passes: u32) -> Result<Pixmap, Error> {
+    let output = composite_page(page, w, h, dilate_passes)?;
+    Ok(apply_rotation(output, page.info.rotation))
+}
+
+/// Composite page layers at the given size without applying rotation.
+fn composite_page(page: &Page, w: u32, h: u32, dilate_passes: u32) -> Result<Pixmap, Error> {
     let page_w = page.info.width as u32;
     let page_h = page.info.height as u32;
 
     let has_palette = page.has_palette();
 
     let output = if has_palette {
-        render_with_palette(page, w, h, page_w, page_h)?
+        render_with_palette(page, w, h, page_w, page_h, dilate_passes)?
     } else {
         let mask = page.decode_mask()?;
+        let mask = mask.map(|m| dilate_mask(m, dilate_passes));
         let bg = page.decode_background()?;
         let fg = page.decode_foreground()?;
 
@@ -35,8 +54,53 @@ pub fn render_to_size(page: &Page, w: u32, h: u32) -> Result<Pixmap, Error> {
         }
     };
 
-    let output = apply_rotation(output, page.info.rotation);
     Ok(output)
+}
+
+fn dilate_mask(mask: Bitmap, passes: u32) -> Bitmap {
+    let mut m = mask;
+    for _ in 0..passes {
+        m = m.dilate();
+    }
+    m
+}
+
+/// Dilate the mask bitmap and propagate blit indices to newly-set pixels.
+/// Each new foreground pixel inherits the blit index of the neighbor that
+/// caused it to be set, so palette color lookup remains correct.
+fn dilate_mask_indexed(mask: Bitmap, blit_map: Vec<i32>, passes: u32) -> (Bitmap, Vec<i32>) {
+    let mut m = mask;
+    let mut bm = blit_map;
+    for _ in 0..passes {
+        let prev = m.clone();
+        m = prev.dilate();
+        let w = m.width as usize;
+        let h = m.height as usize;
+        let mut new_bm = bm.clone();
+        for y in 0..h {
+            for x in 0..w {
+                let idx = y * w + x;
+                // Only update pixels that were just added by dilation
+                if m.get(x as u32, y as u32) && !prev.get(x as u32, y as u32) {
+                    // Find a neighbor that was set in the original mask
+                    let bi = if x > 0 && prev.get((x - 1) as u32, y as u32) {
+                        bm[(y) * w + (x - 1)]
+                    } else if x + 1 < w && prev.get((x + 1) as u32, y as u32) {
+                        bm[(y) * w + (x + 1)]
+                    } else if y > 0 && prev.get(x as u32, (y - 1) as u32) {
+                        bm[(y - 1) * w + x]
+                    } else if y + 1 < h && prev.get(x as u32, (y + 1) as u32) {
+                        bm[(y + 1) * w + x]
+                    } else {
+                        -1 // fallback to black
+                    };
+                    new_bm[idx] = bi;
+                }
+            }
+        }
+        bm = new_bm;
+    }
+    (m, bm)
 }
 
 // ============================================================
@@ -158,18 +222,25 @@ fn render_with_palette(
     h: u32,
     page_w: u32,
     page_h: u32,
+    dilate_passes: u32,
 ) -> Result<Pixmap, Error> {
     let mask_indexed = page.decode_mask_indexed()?;
     let bg = page.decode_background()?;
     let palette = page.decode_palette()?;
 
     match (mask_indexed, bg, palette) {
-        (Some((mask, blit_map)), Some(bg), Some(pal)) => Ok(composite_palette(
-            w, h, &mask, &blit_map, &bg, &pal, page_w, page_h,
-        )),
-        (Some((mask, blit_map)), None, Some(pal)) => Ok(composite_palette_no_bg(
-            w, h, &mask, &blit_map, &pal, page_w, page_h,
-        )),
+        (Some((mask, blit_map)), Some(bg), Some(pal)) => {
+            let (mask, blit_map) = dilate_mask_indexed(mask, blit_map, dilate_passes);
+            Ok(composite_palette(
+                w, h, &mask, &blit_map, &bg, &pal, page_w, page_h,
+            ))
+        }
+        (Some((mask, blit_map)), None, Some(pal)) => {
+            let (mask, blit_map) = dilate_mask_indexed(mask, blit_map, dilate_passes);
+            Ok(composite_palette_no_bg(
+                w, h, &mask, &blit_map, &pal, page_w, page_h,
+            ))
+        }
         (None, Some(bg), _) => Ok(composite_bg_only(w, h, &bg, page_w, page_h)),
         _ => Ok(Pixmap::white(w, h)),
     }
@@ -379,6 +450,86 @@ fn sample_bilinear(src: &Pixmap, x: u32, y: u32, ow: u32, oh: u32) -> (u8, u8, u
 // ============================================================
 // Rotation
 // ============================================================
+
+/// Render a DjVu page at the requested target size with anti-aliased
+/// downscaling and a contrast-boosting curve.
+///
+/// Internally renders at native resolution, then box-downsamples to the target
+/// size. The `boldness` parameter (0.0 = neutral, 0.5–1.0 = typical) darkens
+/// anti-aliased edge pixels, counteracting the perceptual thinning of dark
+/// strokes on light backgrounds.
+///
+/// If the target size is >= native, this falls back to `render_to_size`.
+pub fn render_aa(page: &Page, w: u32, h: u32, boldness: f32) -> Result<Pixmap, Error> {
+    let page_w = page.info.width as u32;
+    let page_h = page.info.height as u32;
+
+    // No downscaling needed — just render normally
+    if w >= page_w && h >= page_h {
+        return render_to_size(page, w, h);
+    }
+
+    // Composite at native resolution without rotation (we rotate after downsample)
+    let native = composite_page(page, page_w, page_h, 0)?;
+
+    // Box-downsample with contrast boost, then apply rotation
+    let downsampled = box_downsample_boost(&native, w, h, boldness);
+    Ok(apply_rotation(downsampled, page.info.rotation))
+}
+
+/// Box-downsample a pixmap and darken anti-aliased edges.
+///
+/// For each output pixel, averages the corresponding rectangle of source pixels,
+/// then applies a curve that pushes semi-transparent edges toward the darker end.
+/// Pure black and pure white are unchanged; only intermediate values are affected.
+fn box_downsample_boost(src: &Pixmap, tw: u32, th: u32, boldness: f32) -> Pixmap {
+    // Build LUT for the boost curve (avoids per-pixel powf)
+    let lut: [u8; 256] = core::array::from_fn(|i| {
+        if boldness <= 0.0 || i == 0 || i == 255 {
+            return i as u8;
+        }
+        // opacity = how dark this pixel is (0.0 = white, 1.0 = black)
+        let opacity = 1.0 - i as f32 / 255.0;
+        // Boost: 1 - (1 - opacity)^(1 + boldness)
+        let boosted = 1.0 - (1.0 - opacity).powf(1.0 + boldness);
+        ((1.0 - boosted) * 255.0 + 0.5).clamp(0.0, 255.0) as u8
+    });
+
+    let sw = src.width;
+    let sh = src.height;
+    let mut out = Pixmap::white(tw, th);
+
+    for y in 0..th {
+        let sy0 = (y as u64 * sh as u64 / th as u64) as u32;
+        let sy1 = (((y + 1) as u64 * sh as u64 + th as u64 - 1) / th as u64).min(sh as u64) as u32;
+
+        for x in 0..tw {
+            let sx0 = (x as u64 * sw as u64 / tw as u64) as u32;
+            let sx1 = (((x + 1) as u64 * sw as u64 + tw as u64 - 1) / tw as u64).min(sw as u64) as u32;
+
+            let count = ((sx1 - sx0) as u32).max(1) * ((sy1 - sy0) as u32).max(1);
+            let mut r_sum = 0u32;
+            let mut g_sum = 0u32;
+            let mut b_sum = 0u32;
+
+            for sy in sy0..sy1 {
+                for sx in sx0..sx1 {
+                    let (r, g, b) = src.get_rgb(sx, sy);
+                    r_sum += r as u32;
+                    g_sum += g as u32;
+                    b_sum += b as u32;
+                }
+            }
+
+            let r = lut[(r_sum / count) as usize];
+            let g = lut[(g_sum / count) as usize];
+            let b = lut[(b_sum / count) as usize];
+            out.set_rgb(x, y, r, g, b);
+        }
+    }
+
+    out
+}
 
 fn apply_rotation(src: Pixmap, rotation: Rotation) -> Pixmap {
     match rotation {
