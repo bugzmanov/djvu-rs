@@ -358,18 +358,18 @@ struct Bytemap {
 }
 
 impl Bytemap {
-    #[inline(always)]
+    #[cfg(test)]
     fn get(&self, row: usize, col: usize) -> i32 {
         self.data[row * self.stride + col] as i32
     }
 
-    #[inline(always)]
+    #[cfg(test)]
     fn add(&mut self, row: usize, col: usize, val: i32) {
         self.data[row * self.stride + col] =
             (self.data[row * self.stride + col] as i32 + val) as i16;
     }
 
-    #[inline(always)]
+    #[cfg(test)]
     fn sub(&mut self, row: usize, col: usize, val: i32) {
         self.data[row * self.stride + col] =
             (self.data[row * self.stride + col] as i32 - val) as i16;
@@ -377,140 +377,223 @@ impl Bytemap {
 }
 
 fn inverse_wavelet_transform(bm: &mut Bytemap, width: usize, height: usize, subsample: usize) {
+    let stride = bm.stride;
+    let data = bm.data.as_mut_slice();
     let mut s_degree: u32 = 4;
     let mut s = 16usize;
+
+    // Reusable state arrays for transposed column pass (allocated once, max size = width at s=1)
+    let mut st0 = vec![0i32; width];
+    let mut st1 = vec![0i32; width];
+    let mut st2 = vec![0i32; width];
+
     while s >= subsample {
-        // Columns first
-        let kmax = (height - 1) >> s_degree;
-        let border = if kmax >= 3 { kmax - 3 } else { 0 };
-        for i in (0..width).step_by(s) {
-            // Lifting (even samples)
-            let mut prev1: i32 = 0;
-            let mut next1: i32 = 0;
-            let mut next3: i32 = if 1 > kmax {
-                0
+        let sd = s_degree as usize;
+
+        // === Column pass (transposed: iterate rows then columns for cache efficiency) ===
+        {
+            let kmax = (height - 1) >> sd;
+            let border = if kmax >= 3 { kmax - 3 } else { 0 };
+            let num_cols = (width + s - 1) / s;
+
+            // --- Lifting (even samples) ---
+            for v in &mut st0[..num_cols] { *v = 0; }
+            for v in &mut st1[..num_cols] { *v = 0; }
+            if kmax >= 1 {
+                let off = (1 << sd) * stride;
+                for (ci, col) in (0..width).step_by(s).enumerate() {
+                    st2[ci] = data[off + col] as i32;
+                }
             } else {
-                bm.get(1 << s_degree, i)
-            };
-            let mut prev3: i32;
-            let mut k = 0;
+                for v in &mut st2[..num_cols] { *v = 0; }
+            }
+
+            let mut k = 0usize;
             while k <= kmax {
-                prev3 = prev1;
-                prev1 = next1;
-                next1 = next3;
-                next3 = if k + 3 > kmax {
-                    0
-                } else {
-                    bm.get((k + 3) << s_degree, i)
-                };
-                let a = prev1 + next1;
-                let c = prev3 + next3;
-                bm.sub(k << s_degree, i, ((a << 3) + a - c + 16) >> 5);
-                k += 2;
-            }
+                let k_off = (k << sd) * stride;
+                let has_n3 = k + 3 <= kmax;
+                let n3_off = if has_n3 { ((k + 3) << sd) * stride } else { 0 };
 
-            // Prediction (odd samples)
-            k = 1;
-            prev1 = bm.get((k - 1) << s_degree, i);
-            if k + 1 <= kmax {
-                next1 = bm.get((k + 1) << s_degree, i);
-                bm.add(k << s_degree, i, (prev1 + next1 + 1) >> 1);
-            } else {
-                bm.add(k << s_degree, i, prev1);
-            }
+                for (ci, col) in (0..width).step_by(s).enumerate() {
+                    let p3 = st0[ci];
+                    let p1 = st1[ci];
+                    let n1 = st2[ci];
+                    let n3 = if has_n3 { data[n3_off + col] as i32 } else { 0 };
 
-            if border >= 3 {
-                next3 = bm.get((k + 3) << s_degree, i);
-            }
+                    let a = p1 + n1;
+                    let c = p3 + n3;
+                    let idx = k_off + col;
+                    data[idx] = (data[idx] as i32 - (((a << 3) + a - c + 16) >> 5)) as i16;
 
-            k = 3;
-            while k <= border {
-                prev3 = prev1;
-                prev1 = next1;
-                next1 = next3;
-                next3 = bm.get((k + 3) << s_degree, i);
-                let a = prev1 + next1;
-                bm.add(k << s_degree, i, ((a << 3) + a - (prev3 + next3) + 8) >> 4);
-                k += 2;
-            }
-
-            while k <= kmax {
-                prev1 = next1;
-                next1 = next3;
-                next3 = 0;
-                if k + 1 <= kmax {
-                    bm.add(k << s_degree, i, (prev1 + next1 + 1) >> 1);
-                } else {
-                    bm.add(k << s_degree, i, prev1);
+                    st0[ci] = p1;
+                    st1[ci] = n1;
+                    st2[ci] = n3;
                 }
                 k += 2;
+            }
+
+            // --- Prediction (odd samples) ---
+            if kmax >= 1 {
+                // Phase 1: k = 1
+                let km1_off = 0;
+                let k_off = (1 << sd) * stride;
+
+                if 2 <= kmax {
+                    let kp1_off = (2 << sd) * stride;
+                    for (ci, col) in (0..width).step_by(s).enumerate() {
+                        let p = data[km1_off + col] as i32;
+                        let n = data[kp1_off + col] as i32;
+                        let idx = k_off + col;
+                        data[idx] = (data[idx] as i32 + ((p + n + 1) >> 1)) as i16;
+                        st0[ci] = p;
+                        st1[ci] = n;
+                    }
+                } else {
+                    for (ci, col) in (0..width).step_by(s).enumerate() {
+                        let p = data[km1_off + col] as i32;
+                        let idx = k_off + col;
+                        data[idx] = (data[idx] as i32 + p) as i16;
+                        st0[ci] = p;
+                        st1[ci] = 0;
+                    }
+                }
+
+                if border >= 3 {
+                    let off = (4 << sd) * stride;
+                    for (ci, col) in (0..width).step_by(s).enumerate() {
+                        st2[ci] = data[off + col] as i32;
+                    }
+                }
+
+                // Phase 2: k = 3, 5, ..., border
+                let mut k = 3usize;
+                while k <= border {
+                    let k_off = (k << sd) * stride;
+                    let n3_off = ((k + 3) << sd) * stride;
+
+                    for (ci, col) in (0..width).step_by(s).enumerate() {
+                        let p3 = st0[ci];
+                        let p1 = st1[ci];
+                        let n1 = st2[ci];
+                        let n3 = data[n3_off + col] as i32;
+
+                        let a = p1 + n1;
+                        let idx = k_off + col;
+                        data[idx] = (data[idx] as i32 + (((a << 3) + a - (p3 + n3) + 8) >> 4)) as i16;
+
+                        st0[ci] = p1;
+                        st1[ci] = n1;
+                        st2[ci] = n3;
+                    }
+                    k += 2;
+                }
+
+                // Phase 3: tail (k > border)
+                while k <= kmax {
+                    let k_off = (k << sd) * stride;
+
+                    if k + 1 <= kmax {
+                        for (ci, col) in (0..width).step_by(s).enumerate() {
+                            let p = st1[ci];
+                            let n = st2[ci];
+                            let idx = k_off + col;
+                            data[idx] = (data[idx] as i32 + ((p + n + 1) >> 1)) as i16;
+                            st1[ci] = n;
+                            st2[ci] = 0;
+                        }
+                    } else {
+                        for (ci, col) in (0..width).step_by(s).enumerate() {
+                            let p = st1[ci];
+                            let idx = k_off + col;
+                            data[idx] = (data[idx] as i32 + p) as i16;
+                            st1[ci] = st2[ci];
+                            st2[ci] = 0;
+                        }
+                    }
+                    k += 2;
+                }
             }
         }
 
-        // Rows
-        let kmax = (width - 1) >> s_degree;
-        let border = if kmax >= 3 { kmax - 3 } else { 0 };
-        for i in (0..height).step_by(s) {
-            // Lifting (even samples)
-            let mut prev1: i32 = 0;
-            let mut next1: i32 = 0;
-            let mut next3: i32 = if 1 > kmax {
-                0
-            } else {
-                bm.get(i, 1 << s_degree)
-            };
-            let mut prev3: i32;
-            let mut k = 0;
-            while k <= kmax {
-                prev3 = prev1;
-                prev1 = next1;
-                next1 = next3;
-                next3 = if k + 3 > kmax {
+        // === Row pass (already cache-friendly, work directly on data slice) ===
+        {
+            let kmax = (width - 1) >> sd;
+            let border = if kmax >= 3 { kmax - 3 } else { 0 };
+
+            for row in (0..height).step_by(s) {
+                let off = row * stride;
+
+                // Lifting (even samples)
+                let mut prev1: i32 = 0;
+                let mut next1: i32 = 0;
+                let mut next3: i32 = if kmax >= 1 {
+                    data[off + (1 << sd)] as i32
+                } else {
                     0
-                } else {
-                    bm.get(i, (k + 3) << s_degree)
                 };
-                let a = prev1 + next1;
-                let c = prev3 + next3;
-                bm.sub(i, k << s_degree, ((a << 3) + a - c + 16) >> 5);
-                k += 2;
-            }
-
-            // Prediction (odd samples)
-            k = 1;
-            prev1 = bm.get(i, (k - 1) << s_degree);
-            if k + 1 <= kmax {
-                next1 = bm.get(i, (k + 1) << s_degree);
-                bm.add(i, k << s_degree, (prev1 + next1 + 1) >> 1);
-            } else {
-                bm.add(i, k << s_degree, prev1);
-            }
-
-            if border >= 3 {
-                next3 = bm.get(i, (k + 3) << s_degree);
-            }
-
-            k = 3;
-            while k <= border {
-                prev3 = prev1;
-                prev1 = next1;
-                next1 = next3;
-                next3 = bm.get(i, (k + 3) << s_degree);
-                let a = prev1 + next1;
-                bm.add(i, k << s_degree, ((a << 3) + a - (prev3 + next3) + 8) >> 4);
-                k += 2;
-            }
-
-            while k <= kmax {
-                prev1 = next1;
-                next1 = next3;
-                next3 = 0;
-                if k + 1 <= kmax {
-                    bm.add(i, k << s_degree, (prev1 + next1 + 1) >> 1);
-                } else {
-                    bm.add(i, k << s_degree, prev1);
+                let mut prev3: i32;
+                let mut k = 0usize;
+                while k <= kmax {
+                    prev3 = prev1;
+                    prev1 = next1;
+                    next1 = next3;
+                    next3 = if k + 3 <= kmax {
+                        data[off + ((k + 3) << sd)] as i32
+                    } else {
+                        0
+                    };
+                    let a = prev1 + next1;
+                    let c = prev3 + next3;
+                    let idx = off + (k << sd);
+                    data[idx] = (data[idx] as i32 - (((a << 3) + a - c + 16) >> 5)) as i16;
+                    k += 2;
                 }
-                k += 2;
+
+                // Prediction (odd samples)
+                if kmax >= 1 {
+                    let mut k = 1usize;
+                    prev1 = data[off + ((k - 1) << sd)] as i32;
+                    if k + 1 <= kmax {
+                        next1 = data[off + ((k + 1) << sd)] as i32;
+                        let idx = off + (k << sd);
+                        data[idx] = (data[idx] as i32 + ((prev1 + next1 + 1) >> 1)) as i16;
+                    } else {
+                        let idx = off + (k << sd);
+                        data[idx] = (data[idx] as i32 + prev1) as i16;
+                    }
+
+                    next3 = if border >= 3 {
+                        data[off + ((k + 3) << sd)] as i32
+                    } else {
+                        0
+                    };
+
+                    k = 3;
+                    while k <= border {
+                        prev3 = prev1;
+                        prev1 = next1;
+                        next1 = next3;
+                        next3 = data[off + ((k + 3) << sd)] as i32;
+                        let a = prev1 + next1;
+                        let idx = off + (k << sd);
+                        data[idx] = (data[idx] as i32 + (((a << 3) + a - (prev3 + next3) + 8) >> 4)) as i16;
+                        k += 2;
+                    }
+
+                    while k <= kmax {
+                        prev1 = next1;
+                        next1 = next3;
+                        next3 = 0;
+                        if k + 1 <= kmax {
+                            let idx = off + (k << sd);
+                            data[idx] = (data[idx] as i32 + ((prev1 + next1 + 1) >> 1)) as i16;
+                        } else {
+                            let idx = off + (k << sd);
+                            data[idx] = (data[idx] as i32 + prev1) as i16;
+                        }
+                        k += 2;
+                    }
+                }
             }
         }
 

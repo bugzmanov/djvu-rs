@@ -13,3 +13,8 @@ rdjvu-render = { path = "../rdjvu-render" }
 [dev-dependencies]
 rdjvu-document = { path = "../rdjvu-document" }
 rdjvu-iff = { path = "../rdjvu-iff" }
+criterion = { version = "0.5", features = ["html_reports"] }
+
+[[bench]]
+name = "render"
+harness = false
