@@ -14,7 +14,7 @@
 //! ```
 
 pub use rdjvu_core::{Bitmap, Error, Pixmap};
-pub use rdjvu_document::Bookmark;
+pub use rdjvu_document::{Bookmark, TextLayer, TextZone, TextZoneKind};
 
 /// A parsed DjVu document. Owns its data and the parsed structure.
 ///
@@ -165,6 +165,21 @@ impl<'a> Page<'a> {
     pub fn render_aa(&self, width: u32, height: u32, boldness: f32) -> Result<Pixmap, Error> {
         let page = self.doc.parsed.page(self.index)?;
         rdjvu_render::render_aa(&page, width, height, boldness)
+    }
+
+    /// Extract the text layer (TXTz/TXTa) with zone hierarchy.
+    ///
+    /// Returns `Ok(None)` if the page has no text layer.
+    pub fn text_layer(&self) -> Result<Option<TextLayer>, Error> {
+        let page = self.doc.parsed.page(self.index)?;
+        page.text_layer()
+    }
+
+    /// Extract the plain text content of the page.
+    ///
+    /// Returns `Ok(None)` if the page has no text layer.
+    pub fn text(&self) -> Result<Option<String>, Error> {
+        Ok(self.text_layer()?.map(|tl| tl.text))
     }
 
     /// Render the page scaled by a factor (e.g. 0.5 = half size, 2.0 = double).
@@ -398,6 +413,32 @@ mod tests {
     fn bookmarks_empty_when_absent() {
         let doc = Document::open(assets_path().join("boy_jb2.djvu")).unwrap();
         assert!(doc.bookmarks().unwrap().is_empty());
+    }
+
+    #[test]
+    fn text_extraction_djvu3spec() {
+        let doc = Document::open(assets_path().join("DjVu3Spec_bundled.djvu")).unwrap();
+        let page = doc.page(0).unwrap();
+
+        let tl = page.text_layer().unwrap().unwrap();
+        assert!(!tl.text.is_empty());
+        assert!(tl.text.contains("Introduction"));
+
+        let root = tl.root.as_ref().unwrap();
+        assert_eq!(root.kind, TextZoneKind::Page);
+    }
+
+    #[test]
+    fn text_plain_convenience() {
+        let doc = Document::open(assets_path().join("DjVu3Spec_bundled.djvu")).unwrap();
+        let text = doc.page(0).unwrap().text().unwrap().unwrap();
+        assert!(text.contains("Introduction"));
+    }
+
+    #[test]
+    fn text_none_for_image_only() {
+        let doc = Document::open(assets_path().join("chicken.djvu")).unwrap();
+        assert!(doc.page(0).unwrap().text().unwrap().is_none());
     }
 
     #[test]

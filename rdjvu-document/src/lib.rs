@@ -40,6 +40,57 @@ pub struct Palette {
     pub indices: Vec<i16>,
 }
 
+/// Text zone type in the DjVu text layer hierarchy.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TextZoneKind {
+    Page = 1,
+    Column = 2,
+    Region = 3,
+    Paragraph = 4,
+    Line = 5,
+    Word = 6,
+    Character = 7,
+}
+
+/// A text zone with bounding box and text span within the page text.
+///
+/// Coordinates are in the DjVu coordinate system (origin at bottom-left, y increases upward).
+/// Use `text_start` and `text_len` to index into `TextLayer::text`.
+#[derive(Debug, Clone)]
+pub struct TextZone {
+    pub kind: TextZoneKind,
+    pub x: i32,
+    pub y: i32,
+    pub width: i32,
+    pub height: i32,
+    pub text_start: usize,
+    pub text_len: usize,
+    pub children: Vec<TextZone>,
+}
+
+/// The text layer of a DjVu page (from TXTz or TXTa chunks).
+#[derive(Debug, Clone)]
+pub struct TextLayer {
+    /// The full UTF-8 text content of the page.
+    pub text: String,
+    /// The zone hierarchy (None if the text has no zone structure).
+    pub root: Option<TextZone>,
+}
+
+impl TextLayer {
+    /// Get the text content of a specific zone.
+    pub fn zone_text(&self, zone: &TextZone) -> &str {
+        let end = (zone.text_start + zone.text_len).min(self.text.len());
+        let start = zone.text_start.min(end);
+        // Ensure we don't split multi-byte UTF-8 characters
+        if self.text.is_char_boundary(start) && self.text.is_char_boundary(end) {
+            &self.text[start..end]
+        } else {
+            ""
+        }
+    }
+}
+
 /// Component type in DIRM directory.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ComponentType {
@@ -283,6 +334,27 @@ impl<'a> Page<'a> {
         };
         let palette = parse_fgbz(fgbz)?;
         Ok(Some(palette))
+    }
+
+    /// Decode the text layer (TXTz or TXTa chunk).
+    ///
+    /// Returns `Ok(None)` if the page has no text layer.
+    pub fn text_layer(&self) -> Result<Option<TextLayer>, Error> {
+        // Try TXTz (BZZ-compressed) first, then TXTa (uncompressed)
+        let data = if let Some(txtz) = self.form.find_first(b"TXTz") {
+            let compressed = txtz.data();
+            if compressed.is_empty() {
+                return Ok(None);
+            }
+            rdjvu_bzz::decode(compressed)
+                .map_err(|e| Error::FormatError(format!("TXTz BZZ decode: {}", e)))?
+        } else if let Some(txta) = self.form.find_first(b"TXTa") {
+            txta.data().to_vec()
+        } else {
+            return Ok(None);
+        };
+
+        parse_text_layer(&data)
     }
 
     fn resolve_shared_dict(&self) -> Result<Option<JB2Dict>, Error> {
@@ -552,6 +624,172 @@ fn read_navm_string(data: &[u8], pos: &mut usize) -> Result<String, Error> {
         .map_err(|_| Error::FormatError("invalid UTF-8 in NAVM bookmark".into()))?;
     *pos += len;
     Ok(s.to_string())
+}
+
+// ============================================================
+// TXTz / TXTa text layer parser
+// ============================================================
+
+fn parse_text_layer(data: &[u8]) -> Result<Option<TextLayer>, Error> {
+    if data.len() < 3 {
+        return Ok(None);
+    }
+
+    let mut pos = 0;
+
+    // Read text length (u24be)
+    let text_len = read_text_u24(data, &mut pos)?;
+
+    // Read UTF-8 text
+    if pos + text_len > data.len() {
+        return Err(Error::UnexpectedEof);
+    }
+    let text = std::str::from_utf8(&data[pos..pos + text_len])
+        .map_err(|_| Error::FormatError("invalid UTF-8 in text layer".into()))?
+        .to_string();
+    pos += text_len;
+
+    // Read version byte
+    if pos >= data.len() {
+        return Ok(Some(TextLayer { text, root: None }));
+    }
+    let _version = data[pos];
+    pos += 1;
+
+    // Parse zone tree if there's more data
+    if pos >= data.len() {
+        return Ok(Some(TextLayer { text, root: None }));
+    }
+
+    let root = parse_text_zone(data, &mut pos, None, None)?;
+    Ok(Some(TextLayer { text, root: Some(root) }))
+}
+
+/// Internal context for delta-encoded zone coordinates.
+struct ZoneCtx {
+    x: i32,
+    y: i32,
+    width: i32,
+    height: i32,
+    text_start: i32,
+    text_len: i32,
+}
+
+fn parse_text_zone(
+    data: &[u8],
+    pos: &mut usize,
+    parent: Option<&ZoneCtx>,
+    prev: Option<&ZoneCtx>,
+) -> Result<TextZone, Error> {
+    if *pos >= data.len() {
+        return Err(Error::UnexpectedEof);
+    }
+
+    let type_byte = data[*pos];
+    *pos += 1;
+
+    let kind = match type_byte {
+        1 => TextZoneKind::Page,
+        2 => TextZoneKind::Column,
+        3 => TextZoneKind::Region,
+        4 => TextZoneKind::Paragraph,
+        5 => TextZoneKind::Line,
+        6 => TextZoneKind::Word,
+        7 => TextZoneKind::Character,
+        _ => return Err(Error::FormatError(format!("unknown text zone type {}", type_byte))),
+    };
+
+    // Read raw delta-encoded values
+    let mut x = read_text_i16_biased(data, pos)?;
+    let mut y = read_text_i16_biased(data, pos)?;
+    let width = read_text_i16_biased(data, pos)?;
+    let height = read_text_i16_biased(data, pos)?;
+    let mut text_start = read_text_i16_biased(data, pos)?;
+    let text_len = read_text_i24(data, pos)?;
+
+    // Apply delta encoding (matches djvujs DjVuText.js decodeZone)
+    if let Some(prev) = prev {
+        match type_byte {
+            1 | 4 | 5 => {
+                // PAGE, PARAGRAPH, LINE
+                x += prev.x;
+                y = prev.y - (y + height);
+            }
+            _ => {
+                // COLUMN, REGION, WORD, CHARACTER
+                x += prev.x + prev.width;
+                y += prev.y;
+            }
+        }
+        text_start += prev.text_start + prev.text_len;
+    } else if let Some(parent) = parent {
+        x += parent.x;
+        y = parent.y + parent.height - (y + height);
+        text_start += parent.text_start;
+    }
+
+    // Read children count (i24)
+    let children_count = read_text_i24(data, pos)?.max(0) as usize;
+
+    let ctx = ZoneCtx { x, y, width, height, text_start, text_len };
+
+    let mut children = Vec::with_capacity(children_count);
+    let mut prev_child: Option<ZoneCtx> = None;
+
+    for _ in 0..children_count {
+        let child = parse_text_zone(data, pos, Some(&ctx), prev_child.as_ref())?;
+        prev_child = Some(ZoneCtx {
+            x: child.x,
+            y: child.y,
+            width: child.width,
+            height: child.height,
+            text_start: child.text_start as i32,
+            text_len: child.text_len as i32,
+        });
+        children.push(child);
+    }
+
+    Ok(TextZone {
+        kind,
+        x,
+        y,
+        width,
+        height,
+        text_start: text_start.max(0) as usize,
+        text_len: text_len.max(0) as usize,
+        children,
+    })
+}
+
+fn read_text_u24(data: &[u8], pos: &mut usize) -> Result<usize, Error> {
+    if *pos + 3 > data.len() {
+        return Err(Error::UnexpectedEof);
+    }
+    let val = ((data[*pos] as usize) << 16)
+        | ((data[*pos + 1] as usize) << 8)
+        | (data[*pos + 2] as usize);
+    *pos += 3;
+    Ok(val)
+}
+
+fn read_text_i16_biased(data: &[u8], pos: &mut usize) -> Result<i32, Error> {
+    if *pos + 2 > data.len() {
+        return Err(Error::UnexpectedEof);
+    }
+    let raw = u16::from_be_bytes([data[*pos], data[*pos + 1]]);
+    *pos += 2;
+    Ok(raw as i32 - 0x8000)
+}
+
+fn read_text_i24(data: &[u8], pos: &mut usize) -> Result<i32, Error> {
+    if *pos + 3 > data.len() {
+        return Err(Error::UnexpectedEof);
+    }
+    let val = ((data[*pos] as i32) << 16)
+        | ((data[*pos + 1] as i32) << 8)
+        | (data[*pos + 2] as i32);
+    *pos += 3;
+    Ok(val)
 }
 
 #[cfg(test)]
@@ -850,5 +1088,178 @@ mod tests {
         assert!(page.decode_background().unwrap().is_none());
         assert!(page.decode_foreground().unwrap().is_none());
         assert!(!page.has_palette());
+    }
+
+    // --- Text extraction tests ---
+
+    fn text_golden_path() -> std::path::PathBuf {
+        std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .unwrap()
+            .join("tests/golden/text")
+    }
+
+    /// Format a TextZone tree as djvused print-txt output for comparison.
+    fn format_zone(layer: &TextLayer, zone: &TextZone, indent: usize) -> String {
+        let mut out = String::new();
+        let pad = " ".repeat(indent);
+        let kind_str = match zone.kind {
+            TextZoneKind::Page => "page",
+            TextZoneKind::Column => "column",
+            TextZoneKind::Region => "region",
+            TextZoneKind::Paragraph => "para",
+            TextZoneKind::Line => "line",
+            TextZoneKind::Word => "word",
+            TextZoneKind::Character => "char",
+        };
+        let x2 = zone.x + zone.width;
+        let y2 = zone.y + zone.height;
+
+        if zone.children.is_empty() {
+            // Leaf zone: include text (strip trailing whitespace like djvused)
+            let text = layer.zone_text(zone);
+            let trimmed = text.trim_end();
+            let escaped = djvused_escape(trimmed);
+            out.push_str(&format!("{}({} {} {} {} {} \"{}\")", pad, kind_str, zone.x, zone.y, x2, y2, escaped));
+        } else {
+            out.push_str(&format!("{}({} {} {} {} {}", pad, kind_str, zone.x, zone.y, x2, y2));
+            for child in &zone.children {
+                out.push('\n');
+                out.push_str(&format_zone(layer, child, indent + 1));
+            }
+            out.push(')');
+        }
+        out
+    }
+
+    /// Escape text like djvused: non-printable and non-ASCII bytes as 3-digit octal.
+    fn djvused_escape(text: &str) -> String {
+        let mut out = String::new();
+        for b in text.bytes() {
+            match b {
+                b'\\' => out.push_str("\\\\"),
+                b'"' => out.push_str("\\\""),
+                0x20..=0x7e => out.push(b as char),
+                _ => out.push_str(&format!("\\{:03o}", b)),
+            }
+        }
+        out
+    }
+
+    fn format_text_layer(layer: &TextLayer) -> String {
+        match &layer.root {
+            Some(root) => format_zone(layer, root, 0),
+            None => String::new(),
+        }
+    }
+
+    #[test]
+    fn text_layer_none_for_no_text() {
+        // boy_jb2 has no text layer
+        let data = std::fs::read(assets_path().join("boy_jb2.djvu")).unwrap();
+        let doc = Document::parse(&data).unwrap();
+        let tl = doc.page(0).unwrap().text_layer().unwrap();
+        assert!(tl.is_none());
+    }
+
+    #[test]
+    fn text_layer_carte_p1() {
+        let data = std::fs::read(assets_path().join("carte.djvu")).unwrap();
+        let doc = Document::parse(&data).unwrap();
+        let tl = doc.page(0).unwrap().text_layer().unwrap().unwrap();
+
+        // Verify text is non-empty
+        assert!(!tl.text.is_empty(), "carte text should not be empty");
+
+        // Verify root zone is PAGE type
+        let root = tl.root.as_ref().unwrap();
+        assert_eq!(root.kind, TextZoneKind::Page);
+
+        // Compare against golden djvused output
+        let golden = std::fs::read_to_string(text_golden_path().join("carte_p1.txt")).unwrap();
+        let actual = format_text_layer(&tl);
+        assert_eq!(actual.trim(), golden.trim(), "carte p1 text mismatch");
+    }
+
+    #[test]
+    fn text_layer_djvu3spec_p1() {
+        let data = std::fs::read(assets_path().join("DjVu3Spec_bundled.djvu")).unwrap();
+        let doc = Document::parse(&data).unwrap();
+        let tl = doc.page(0).unwrap().text_layer().unwrap().unwrap();
+
+        assert!(!tl.text.is_empty());
+
+        let root = tl.root.as_ref().unwrap();
+        assert_eq!(root.kind, TextZoneKind::Page);
+        // DjVu3Spec has full hierarchy: page → column → region → para → line → word
+        assert!(!root.children.is_empty());
+
+        let golden = std::fs::read_to_string(text_golden_path().join("djvu3spec_p1.txt")).unwrap();
+        let actual = format_text_layer(&tl);
+        assert_eq!(actual.trim(), golden.trim(), "djvu3spec p1 text mismatch");
+    }
+
+    #[test]
+    fn text_layer_colorbook_p1() {
+        let data = std::fs::read(assets_path().join("colorbook.djvu")).unwrap();
+        let doc = Document::parse(&data).unwrap();
+        let tl = doc.page(0).unwrap().text_layer().unwrap().unwrap();
+
+        assert!(!tl.text.is_empty());
+
+        let golden = std::fs::read_to_string(text_golden_path().join("colorbook_p1.txt")).unwrap();
+        let actual = format_text_layer(&tl);
+        assert_eq!(actual.trim(), golden.trim(), "colorbook p1 text mismatch");
+    }
+
+    #[test]
+    fn text_layer_czech_p6_utf8() {
+        // Czech text with non-ASCII characters
+        let data = std::fs::read(assets_path().join("czech.djvu")).unwrap();
+        let doc = Document::parse(&data).unwrap();
+        let tl = doc.page(5).unwrap().text_layer().unwrap().unwrap();
+
+        assert!(!tl.text.is_empty());
+
+        let golden = std::fs::read_to_string(text_golden_path().join("czech_p6.txt")).unwrap();
+        let actual = format_text_layer(&tl);
+        assert_eq!(actual.trim(), golden.trim(), "czech p6 text mismatch");
+    }
+
+    #[test]
+    fn text_layer_zone_text_access() {
+        // Test the zone_text helper
+        let data = std::fs::read(assets_path().join("DjVu3Spec_bundled.djvu")).unwrap();
+        let doc = Document::parse(&data).unwrap();
+        let tl = doc.page(0).unwrap().text_layer().unwrap().unwrap();
+
+        // Find the first word zone
+        fn find_first_word(zone: &TextZone) -> Option<&TextZone> {
+            if zone.kind == TextZoneKind::Word {
+                return Some(zone);
+            }
+            for child in &zone.children {
+                if let Some(w) = find_first_word(child) {
+                    return Some(w);
+                }
+            }
+            None
+        }
+
+        let root = tl.root.as_ref().unwrap();
+        let word = find_first_word(root).expect("should have at least one word");
+        let text = tl.zone_text(word);
+        assert!(!text.is_empty(), "first word text should not be empty");
+    }
+
+    #[test]
+    fn text_layer_all_pages_djvu3spec() {
+        // All 71 pages should parse without error
+        let data = std::fs::read(assets_path().join("DjVu3Spec_bundled.djvu")).unwrap();
+        let doc = Document::parse(&data).unwrap();
+        for i in 0..doc.page_count() {
+            let result = doc.page(i).unwrap().text_layer();
+            assert!(result.is_ok(), "text_layer failed for djvu3spec page {}", i);
+        }
     }
 }
