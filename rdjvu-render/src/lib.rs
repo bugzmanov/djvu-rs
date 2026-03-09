@@ -898,6 +898,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore] // development parameter sweep — run with --ignored
     fn debug_colorbook_navm_layer_mismatch() {
         let compare = |actual: &Pixmap, ref_path: &str, tag: &str| {
             let rp = std::path::Path::new(ref_path);
@@ -992,6 +993,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore] // development parameter sweep — run with --ignored
     fn debug_carte_layer_mismatch() {
         let compare = |actual: &Pixmap, ref_path: &str, tag: &str| {
             let rp = std::path::Path::new(ref_path);
@@ -1061,6 +1063,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore] // development parameter sweep — run with --ignored
     fn debug_navm_bg_scaler_candidates() {
         let ref_path = std::path::Path::new("/tmp/rdjvu_debug/navm_p4_bg.ppm");
         if !ref_path.exists() {
@@ -1266,6 +1269,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore] // development parameter sweep — run with --ignored
     fn debug_carte_bg_scaler_candidates() {
         let ref_path = std::path::Path::new("/tmp/rdjvu_debug/carte_bg.ppm");
         if !ref_path.exists() {
@@ -1432,6 +1436,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore] // development parameter sweep — run with --ignored
     fn debug_carte_bg_phase_search() {
         let ref_path = std::path::Path::new("/tmp/rdjvu_debug/carte_bg.ppm");
         if !ref_path.exists() {
@@ -1525,6 +1530,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore] // development parameter sweep — run with --ignored
     fn debug_carte_bg_frac16_candidate() {
         let ref_path = std::path::Path::new("/tmp/rdjvu_debug/carte_bg.ppm");
         if !ref_path.exists() {
@@ -1595,6 +1601,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore] // development parameter sweep — run with --ignored
     fn debug_bg_fraction_bits_sweep() {
         let cases = [
             (
@@ -1684,6 +1691,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore] // development parameter sweep — run with --ignored
     fn debug_carte_bg_mod3_profile() {
         let ref_path = std::path::Path::new("/tmp/rdjvu_debug/carte_bg.ppm");
         if !ref_path.exists() {
@@ -1719,6 +1727,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore] // development parameter sweep — run with --ignored
     fn debug_carte_bg_vertical_phase_flip_candidate() {
         let ref_path = std::path::Path::new("/tmp/rdjvu_debug/carte_bg.ppm");
         if !ref_path.exists() {
@@ -1784,6 +1793,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore] // development parameter sweep — run with --ignored
     fn debug_colorbook_bg_scaler_candidates() {
         let ref_path = std::path::Path::new("/tmp/rdjvu_debug/colorbook_p1_bg.ppm");
         if !ref_path.exists() {
@@ -2097,6 +2107,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore] // development parameter sweep — run with --ignored
     fn debug_colorbook_fg_scaler_candidates() {
         let ref_path = std::path::Path::new("/tmp/rdjvu_debug/colorbook_p1_fg.ppm");
         if !ref_path.exists() {
@@ -2248,6 +2259,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore] // development parameter sweep — run with --ignored
     fn debug_carte_fg_shift_candidates() {
         let ref_path = std::path::Path::new("/tmp/rdjvu_debug/carte_fg.ppm");
         if !ref_path.exists() {
@@ -2295,6 +2307,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore] // development parameter sweep — run with --ignored
     fn debug_colorbook_bg_mismatch_profile() {
         let ref_path = std::path::Path::new("/tmp/rdjvu_debug/colorbook_p1_bg.ppm");
         if !ref_path.exists() {
@@ -2349,6 +2362,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore] // development parameter sweep — run with --ignored
     fn debug_colorbook_bg_channel_bilinear_candidate() {
         let ref_path = std::path::Path::new("/tmp/rdjvu_debug/colorbook_p1_bg.ppm");
         if !ref_path.exists() {
@@ -2428,6 +2442,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore] // development parameter sweep — run with --ignored
     fn debug_colorbook_bg_xphase_search() {
         let ref_path = std::path::Path::new("/tmp/rdjvu_debug/colorbook_p1_bg.ppm");
         if !ref_path.exists() {
@@ -2502,6 +2517,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore] // development parameter sweep — run with --ignored
     fn debug_colorbook_bg_arithmetic_candidates() {
         let ref_path = std::path::Path::new("/tmp/rdjvu_debug/colorbook_p1_bg.ppm");
         if !ref_path.exists() {
@@ -2644,6 +2660,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore] // development parameter sweep — run with --ignored
     fn debug_colorbook_full_mismatch_profile() {
         let expected = std::fs::read(golden_path().join("colorbook_p1.ppm")).unwrap();
         let data = std::fs::read(assets_path().join("colorbook.djvu")).unwrap();
@@ -2732,6 +2749,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore] // development parameter sweep — run with --ignored
     fn debug_colorbook_full_fg_shift_candidates() {
         let expected = std::fs::read(golden_path().join("colorbook_p1.ppm")).unwrap();
         let data = std::fs::read(assets_path().join("colorbook.djvu")).unwrap();
@@ -2777,6 +2795,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore] // development parameter sweep — run with --ignored
     fn debug_colorbook_fg_shift_search() {
         let ref_path = std::path::Path::new("/tmp/rdjvu_debug/colorbook_p1_fg.ppm");
         if !ref_path.exists() {
@@ -2837,6 +2856,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore] // development parameter sweep — run with --ignored
     fn debug_layer_virtual_dims() {
         for (file, page_idx) in [("carte.djvu", 0usize), ("colorbook.djvu", 0usize)] {
             let data = std::fs::read(assets_path().join(file)).unwrap();
@@ -2865,6 +2885,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore] // development parameter sweep — run with --ignored
     fn debug_dump_carte_actual_ppm() {
         let out_dir = std::path::Path::new("/tmp/rdjvu_debug");
         std::fs::create_dir_all(out_dir).unwrap();
@@ -2874,6 +2895,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore] // development parameter sweep — run with --ignored
     fn debug_dump_carte_bg_actual_ppm() {
         let out_dir = std::path::Path::new("/tmp/rdjvu_debug");
         std::fs::create_dir_all(out_dir).unwrap();
