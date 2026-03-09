@@ -1,6 +1,41 @@
 use rdjvu_core::Bitmap;
 use rdjvu_zp::ZPDecoder;
 
+/// Errors that can occur during JB2 decoding.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DecodeError {
+    /// A flag bit in the image/dict header was set when it must be zero.
+    BadHeaderFlag,
+    /// The inherited dictionary length exceeds the shared dictionary size.
+    InheritedDictTooLarge,
+    /// The stream references a shared dictionary but none was provided.
+    MissingSharedDict,
+    /// Image dimensions exceed the safety limit (~64M pixels).
+    ImageTooLarge,
+    /// A record references a dictionary symbol but the dictionary is empty.
+    EmptyDictReference,
+    /// An unrecognized record type was encountered in the image stream.
+    UnknownRecordType,
+    /// An unexpected record type was encountered in a dictionary stream.
+    UnexpectedDictRecordType,
+}
+
+impl core::fmt::Display for DecodeError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            DecodeError::BadHeaderFlag => write!(f, "JB2: bad flag bit in header"),
+            DecodeError::InheritedDictTooLarge => write!(f, "JB2: inherited dict length exceeds shared dict size"),
+            DecodeError::MissingSharedDict => write!(f, "JB2: stream requires shared dict but none provided"),
+            DecodeError::ImageTooLarge => write!(f, "JB2: image dimensions too large"),
+            DecodeError::EmptyDictReference => write!(f, "JB2: dict reference with empty dict"),
+            DecodeError::UnknownRecordType => write!(f, "JB2: unknown record type"),
+            DecodeError::UnexpectedDictRecordType => write!(f, "JB2: unexpected record type in dict stream"),
+        }
+    }
+}
+
+impl std::error::Error for DecodeError {}
+
 // ============================================================
 // NumContext: arena-based binary tree for variable-length numbers
 // ============================================================
@@ -446,7 +481,7 @@ fn flip_blit_map(map: &[i32], width: i32, height: i32) -> Vec<i32> {
 
 /// Decode a JB2 image stream (Sjbz chunk data).
 /// Returns the page bitmap in PBM convention (row 0 = top).
-pub fn decode(data: &[u8], shared_dict: Option<&JB2Dict>) -> Result<Bitmap, &'static str> {
+pub fn decode(data: &[u8], shared_dict: Option<&JB2Dict>) -> Result<Bitmap, DecodeError> {
     let (bm, _) = decode_inner(data, shared_dict, false)?;
     Ok(bm)
 }
@@ -454,11 +489,11 @@ pub fn decode(data: &[u8], shared_dict: Option<&JB2Dict>) -> Result<Bitmap, &'st
 /// Decode a JB2 image stream, returning both the bitmap and a per-pixel blit index map.
 /// The blit index map has the same dimensions as the bitmap (row 0 = top).
 /// Each pixel stores the 0-based blit index that last wrote to it, or -1 if no blit.
-pub fn decode_indexed(data: &[u8], shared_dict: Option<&JB2Dict>) -> Result<(Bitmap, Vec<i32>), &'static str> {
+pub fn decode_indexed(data: &[u8], shared_dict: Option<&JB2Dict>) -> Result<(Bitmap, Vec<i32>), DecodeError> {
     decode_inner(data, shared_dict, true)
 }
 
-fn decode_inner(data: &[u8], shared_dict: Option<&JB2Dict>, track_blits: bool) -> Result<(Bitmap, Vec<i32>), &'static str> {
+fn decode_inner(data: &[u8], shared_dict: Option<&JB2Dict>, track_blits: bool) -> Result<(Bitmap, Vec<i32>), DecodeError> {
     let mut zp = ZPDecoder::new(data);
 
     // Contexts
@@ -506,7 +541,7 @@ fn decode_inner(data: &[u8], shared_dict: Option<&JB2Dict>, track_blits: bool) -
     // Flag bit (must be 0)
     let mut flag_ctx: u8 = 0;
     if zp.decode(&mut flag_ctx) {
-        return Err("JB2: bad flag bit in header");
+        return Err(DecodeError::BadHeaderFlag);
     }
 
     // Initialize dictionary
@@ -514,11 +549,11 @@ fn decode_inner(data: &[u8], shared_dict: Option<&JB2Dict>, track_blits: bool) -
     if initial_dict_length > 0 {
         if let Some(sd) = shared_dict {
             if initial_dict_length > sd.symbols.len() {
-                return Err("JB2: inherited dict length exceeds shared dict size");
+                return Err(DecodeError::InheritedDictTooLarge);
             }
             dict.extend_from_slice(&sd.symbols[..initial_dict_length]);
         } else {
-            return Err("JB2: stream requires shared dict but none provided");
+            return Err(DecodeError::MissingSharedDict);
         }
     }
 
@@ -527,7 +562,7 @@ fn decode_inner(data: &[u8], shared_dict: Option<&JB2Dict>, track_blits: bool) -
     const MAX_PIXELS: usize = 64 * 1024 * 1024;
     let page_size = (image_width * image_height) as usize;
     if page_size > MAX_PIXELS {
-        return Err("JB2: image dimensions too large");
+        return Err(DecodeError::ImageTooLarge);
     }
     let mut page = vec![0u8; page_size];
     let mut blit_map = if track_blits { Some(vec![-1i32; page_size]) } else { None };
@@ -586,7 +621,7 @@ fn decode_inner(data: &[u8], shared_dict: Option<&JB2Dict>, track_blits: bool) -
             }
             4 => {
                 // Matched with refinement: add to dict AND blit
-                if dict.is_empty() { return Err("JB2: dict reference with empty dict"); }
+                if dict.is_empty() { return Err(DecodeError::EmptyDictReference); }
                 let index = decode_num(&mut zp, &mut symbol_index_ctx, 0, dict.len() as i32 - 1) as usize;
                 let wdiff = decode_num(&mut zp, &mut symbol_width_diff_ctx, -262143, 262142);
                 let hdiff = decode_num(&mut zp, &mut symbol_height_diff_ctx, -262143, 262142);
@@ -608,7 +643,7 @@ fn decode_inner(data: &[u8], shared_dict: Option<&JB2Dict>, track_blits: bool) -
             }
             5 => {
                 // Matched with refinement: add to dict only
-                if dict.is_empty() { return Err("JB2: dict reference with empty dict"); }
+                if dict.is_empty() { return Err(DecodeError::EmptyDictReference); }
                 let index = decode_num(&mut zp, &mut symbol_index_ctx, 0, dict.len() as i32 - 1) as usize;
                 let wdiff = decode_num(&mut zp, &mut symbol_width_diff_ctx, -262143, 262142);
                 let hdiff = decode_num(&mut zp, &mut symbol_height_diff_ctx, -262143, 262142);
@@ -619,7 +654,7 @@ fn decode_inner(data: &[u8], shared_dict: Option<&JB2Dict>, track_blits: bool) -
             }
             6 => {
                 // Matched with refinement: blit only
-                if dict.is_empty() { return Err("JB2: dict reference with empty dict"); }
+                if dict.is_empty() { return Err(DecodeError::EmptyDictReference); }
                 let index = decode_num(&mut zp, &mut symbol_index_ctx, 0, dict.len() as i32 - 1) as usize;
                 let wdiff = decode_num(&mut zp, &mut symbol_width_diff_ctx, -262143, 262142);
                 let hdiff = decode_num(&mut zp, &mut symbol_height_diff_ctx, -262143, 262142);
@@ -639,7 +674,7 @@ fn decode_inner(data: &[u8], shared_dict: Option<&JB2Dict>, track_blits: bool) -
             }
             7 => {
                 // Matched copy without refinement: blit
-                if dict.is_empty() { return Err("JB2: dict reference with empty dict"); }
+                if dict.is_empty() { return Err(DecodeError::EmptyDictReference); }
                 let index = decode_num(&mut zp, &mut symbol_index_ctx, 0, dict.len() as i32 - 1) as usize;
                 let bm = &dict[index];
                 let bm_w = bm.width;
@@ -680,7 +715,7 @@ fn decode_inner(data: &[u8], shared_dict: Option<&JB2Dict>, track_blits: bool) -
                 break;
             }
             _ => {
-                return Err("JB2: unknown record type");
+                return Err(DecodeError::UnknownRecordType);
             }
         }
     }
@@ -694,7 +729,7 @@ fn decode_inner(data: &[u8], shared_dict: Option<&JB2Dict>, track_blits: bool) -
 }
 
 /// Decode a JB2 dictionary stream (Djbz chunk data).
-pub fn decode_dict(data: &[u8], inherited: Option<&JB2Dict>) -> Result<JB2Dict, &'static str> {
+pub fn decode_dict(data: &[u8], inherited: Option<&JB2Dict>) -> Result<JB2Dict, DecodeError> {
     let mut zp = ZPDecoder::new(data);
 
     let mut record_type_ctx = NumContext::new();
@@ -726,18 +761,18 @@ pub fn decode_dict(data: &[u8], inherited: Option<&JB2Dict>) -> Result<JB2Dict, 
 
     let mut flag_ctx: u8 = 0;
     if zp.decode(&mut flag_ctx) {
-        return Err("JB2 dict: bad flag bit in header");
+        return Err(DecodeError::BadHeaderFlag);
     }
 
     let mut dict: Vec<Jbm> = Vec::new();
     if initial_dict_length > 0 {
         if let Some(inh) = inherited {
             if initial_dict_length > inh.symbols.len() {
-                return Err("JB2 dict: inherited length exceeds source dict size");
+                return Err(DecodeError::InheritedDictTooLarge);
             }
             dict.extend_from_slice(&inh.symbols[..initial_dict_length]);
         } else {
-            return Err("JB2 dict: stream requires inherited dict but none provided");
+            return Err(DecodeError::MissingSharedDict);
         }
     }
 
@@ -753,7 +788,7 @@ pub fn decode_dict(data: &[u8], inherited: Option<&JB2Dict>) -> Result<JB2Dict, 
                 dict.push(bm.remove_empty_edges());
             }
             5 => {
-                if dict.is_empty() { return Err("JB2: dict reference with empty dict"); }
+                if dict.is_empty() { return Err(DecodeError::EmptyDictReference); }
                 let index = decode_num(&mut zp, &mut symbol_index_ctx, 0, dict.len() as i32 - 1) as usize;
                 let wdiff = decode_num(&mut zp, &mut symbol_width_diff_ctx, -262143, 262142);
                 let hdiff = decode_num(&mut zp, &mut symbol_height_diff_ctx, -262143, 262142);
@@ -771,7 +806,7 @@ pub fn decode_dict(data: &[u8], inherited: Option<&JB2Dict>) -> Result<JB2Dict, 
             }
             11 => break,
             _ => {
-                return Err("JB2 dict: unexpected record type");
+                return Err(DecodeError::UnexpectedDictRecordType);
             }
         }
     }

@@ -1,5 +1,22 @@
 use rdjvu_zp::ZPDecoder;
 
+/// Errors that can occur during BZZ decoding.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DecodeError {
+    /// The BWT block did not contain an end-of-block marker.
+    MissingEndOfBlock,
+}
+
+impl core::fmt::Display for DecodeError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            DecodeError::MissingEndOfBlock => write!(f, "BZZ: missing end-of-block marker"),
+        }
+    }
+}
+
+impl std::error::Error for DecodeError {}
+
 const FREQMAX: usize = 4;
 const CTXIDS: usize = 3;
 const NUM_CONTEXTS: usize = 300;
@@ -7,7 +24,7 @@ const NUM_CONTEXTS: usize = 300;
 /// Decode a BZZ-compressed stream.
 ///
 /// Returns the decompressed bytes.
-pub fn decode(data: &[u8]) -> Result<Vec<u8>, &'static str> {
+pub fn decode(data: &[u8]) -> Result<Vec<u8>, DecodeError> {
     let mut zp = ZPDecoder::new(data);
     let mut output = Vec::new();
     let mut ctx = [0u8; NUM_CONTEXTS];
@@ -49,7 +66,7 @@ fn decode_binary(zp: &mut ZPDecoder, ctx: &mut [u8], ctxoff: usize, bits: u32) -
 }
 
 /// Decode a single BZZ block.
-fn decode_block(zp: &mut ZPDecoder, ctx: &mut [u8; NUM_CONTEXTS], size: usize) -> Result<Vec<u8>, &'static str> {
+fn decode_block(zp: &mut ZPDecoder, ctx: &mut [u8; NUM_CONTEXTS], size: usize) -> Result<Vec<u8>, DecodeError> {
     // Decode frequency shift (0, 1, or 2)
     let mut fshift: u32 = 0;
     if zp.decode_passthrough() {
@@ -188,7 +205,7 @@ fn decode_block(zp: &mut ZPDecoder, ctx: &mut [u8; NUM_CONTEXTS], size: usize) -
     }
 
     if markerpos < 0 {
-        return Err("BZZ: missing end-of-block marker");
+        return Err(DecodeError::MissingEndOfBlock);
     }
 
     // Inverse Burrows-Wheeler Transform
@@ -199,7 +216,7 @@ fn decode_block(zp: &mut ZPDecoder, ctx: &mut [u8; NUM_CONTEXTS], size: usize) -
 ///
 /// `data` contains the BWT-transformed bytes with a marker at `markerpos`.
 /// Returns the original uncompressed data (excluding the marker byte).
-fn inverse_bwt(data: &mut [u8], markerpos: usize) -> Result<Vec<u8>, &'static str> {
+fn inverse_bwt(data: &mut [u8], markerpos: usize) -> Result<Vec<u8>, DecodeError> {
     let size = data.len();
     if size == 0 {
         return Ok(Vec::new());

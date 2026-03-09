@@ -1,5 +1,40 @@
-use rdjvu_core::{Error, Pixmap};
+use rdjvu_core::Pixmap;
 use rdjvu_zp::ZPDecoder;
+
+/// Errors that can occur during IW44 decoding.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DecodeError {
+    /// A chunk is too short to contain the required header fields.
+    ChunkTooShort,
+    /// The first chunk header is too short (needs at least 9 bytes).
+    HeaderTooShort,
+    /// Image width or height is zero.
+    ZeroDimension,
+    /// Image dimensions exceed the safety limit (~256M pixels).
+    ImageTooLarge,
+    /// A subsequent chunk was encountered before the first chunk.
+    MissingFirstChunk,
+    /// The subsample parameter must be >= 1.
+    InvalidSubsample,
+    /// No codec has been initialized (no chunks decoded yet).
+    MissingCodec,
+}
+
+impl core::fmt::Display for DecodeError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            DecodeError::ChunkTooShort => write!(f, "IW44: chunk too short"),
+            DecodeError::HeaderTooShort => write!(f, "IW44: first chunk header too short"),
+            DecodeError::ZeroDimension => write!(f, "IW44: zero dimension"),
+            DecodeError::ImageTooLarge => write!(f, "IW44: image dimensions too large"),
+            DecodeError::MissingFirstChunk => write!(f, "IW44: subsequent chunk before first chunk"),
+            DecodeError::InvalidSubsample => write!(f, "IW44: subsample must be >= 1"),
+            DecodeError::MissingCodec => write!(f, "IW44: no codec initialized"),
+        }
+    }
+}
+
+impl std::error::Error for DecodeError {}
 
 // Band-to-bucket mapping: (from, to) inclusive
 const BAND_BUCKETS: [(usize, usize); 10] = [
@@ -649,9 +684,9 @@ impl IW44Image {
     }
 
     /// Decode one BG44/FG44 chunk. Call multiple times for progressive chunks.
-    pub fn decode_chunk(&mut self, data: &[u8]) -> Result<(), &'static str> {
+    pub fn decode_chunk(&mut self, data: &[u8]) -> Result<(), DecodeError> {
         if data.len() < 2 {
-            return Err("IW44 chunk too short");
+            return Err(DecodeError::ChunkTooShort);
         }
         let serial = data[0];
         let slices = data[1];
@@ -659,7 +694,7 @@ impl IW44Image {
 
         if serial == 0 {
             if data.len() < 9 {
-                return Err("IW44 first chunk header too short");
+                return Err(DecodeError::HeaderTooShort);
             }
             let majver = data[2];
             let minor = data[3];
@@ -671,12 +706,12 @@ impl IW44Image {
             let chroma_half = minor >= 2 && (delay_byte & 0x80) == 0;
 
             if w == 0 || h == 0 {
-                return Err("IW44: zero dimension");
+                return Err(DecodeError::ZeroDimension);
             }
             // Cap total pixels to prevent OOM on malformed input (~256M pixels)
             let pixels = w as u64 * h as u64;
             if pixels > 256 * 1024 * 1024 {
-                return Err("IW44: image dimensions too large");
+                return Err(DecodeError::ImageTooLarge);
             }
 
             self.width = w;
@@ -693,7 +728,7 @@ impl IW44Image {
             payload_start = 9;
         } else {
             if self.y_codec.is_none() {
-                return Err("IW44 subsequent chunk before first chunk");
+                return Err(DecodeError::MissingFirstChunk);
             }
             payload_start = 2;
         }
@@ -720,19 +755,19 @@ impl IW44Image {
     }
 
     /// Convert decoded image to a Pixmap. DjVu images are bottom-to-top; this flips to top-to-bottom.
-    pub fn to_pixmap(&self) -> Result<Pixmap, Error> {
+    pub fn to_pixmap(&self) -> Result<Pixmap, DecodeError> {
         self.to_pixmap_subsample(1)
     }
 
     /// Convert decoded image to a Pixmap at reduced resolution (subsample=1,2,4,8,16).
-    pub fn to_pixmap_subsample(&self, subsample: u32) -> Result<Pixmap, Error> {
+    pub fn to_pixmap_subsample(&self, subsample: u32) -> Result<Pixmap, DecodeError> {
         if subsample == 0 {
-            return Err(Error::Unsupported("subsample must be >= 1"));
+            return Err(DecodeError::InvalidSubsample);
         }
         let y_codec = self
             .y_codec
             .as_ref()
-            .ok_or(Error::MissingChunk("BG44/FG44"))?;
+            .ok_or(DecodeError::MissingCodec)?;
         let sub = subsample as usize;
         let w = ((self.width as usize + sub - 1) / sub) as u32;
         let h = ((self.height as usize + sub - 1) / sub) as u32;
@@ -744,12 +779,12 @@ impl IW44Image {
             let cb_bm = self
                 .cb_codec
                 .as_ref()
-                .ok_or(Error::MissingChunk("BG44/FG44 Cb"))?
+                .ok_or(DecodeError::MissingCodec)?
                 .get_bytemap(chroma_sub);
             let cr_bm = self
                 .cr_codec
                 .as_ref()
-                .ok_or(Error::MissingChunk("BG44/FG44 Cr"))?
+                .ok_or(DecodeError::MissingCodec)?
                 .get_bytemap(chroma_sub);
             let mut pm = Pixmap::new(w, h, 0, 0, 0, 255);
             for row in 0..h {
@@ -803,14 +838,14 @@ impl IW44Image {
     pub fn to_normalized_planes_subsample(
         &self,
         subsample: u32,
-    ) -> Result<NormalizedPlanes, Error> {
+    ) -> Result<NormalizedPlanes, DecodeError> {
         if subsample == 0 {
-            return Err(Error::Unsupported("subsample must be >= 1"));
+            return Err(DecodeError::InvalidSubsample);
         }
         let y_codec = self
             .y_codec
             .as_ref()
-            .ok_or(Error::MissingChunk("BG44/FG44"))?;
+            .ok_or(DecodeError::MissingCodec)?;
         let sub = subsample as usize;
         let w = ((self.width as usize + sub - 1) / sub) as u32;
         let h = ((self.height as usize + sub - 1) / sub) as u32;
@@ -832,12 +867,12 @@ impl IW44Image {
             let cb_bm = self
                 .cb_codec
                 .as_ref()
-                .ok_or(Error::MissingChunk("BG44/FG44 Cb"))?
+                .ok_or(DecodeError::MissingCodec)?
                 .get_bytemap(chroma_sub);
             let cr_bm = self
                 .cr_codec
                 .as_ref()
-                .ok_or(Error::MissingChunk("BG44/FG44 Cr"))?
+                .ok_or(DecodeError::MissingCodec)?
                 .get_bytemap(chroma_sub);
             let mut cb = vec![0i16; (w * h) as usize];
             let mut cr = vec![0i16; (w * h) as usize];
@@ -933,11 +968,11 @@ mod tests {
     fn decode_chunks_with_options(
         chunks: &[&[u8]],
         preadvance_color_delay: bool,
-    ) -> Result<IW44Image, &'static str> {
+    ) -> Result<IW44Image, DecodeError> {
         let mut img = IW44Image::new();
         for data in chunks {
             if data.len() < 2 {
-                return Err("IW44 chunk too short");
+                return Err(DecodeError::ChunkTooShort);
             }
             let serial = data[0];
             let slices = data[1];
@@ -945,7 +980,7 @@ mod tests {
 
             if serial == 0 {
                 if data.len() < 9 {
-                    return Err("IW44 first chunk header too short");
+                    return Err(DecodeError::HeaderTooShort);
                 }
                 let majver = data[2];
                 let minor = data[3];
@@ -978,7 +1013,7 @@ mod tests {
                 payload_start = 9;
             } else {
                 if img.y_codec.is_none() {
-                    return Err("IW44 subsequent chunk before first chunk");
+                    return Err(DecodeError::MissingFirstChunk);
                 }
                 payload_start = 2;
             }
@@ -1016,12 +1051,12 @@ mod tests {
         reset_each_chunk: bool,
         reset_each_slice: bool,
         reset_on_color_start: bool,
-    ) -> Result<IW44Image, &'static str> {
+    ) -> Result<IW44Image, DecodeError> {
         let mut img = IW44Image::new();
         let mut color_started = false;
         for data in chunks {
             if data.len() < 2 {
-                return Err("IW44 chunk too short");
+                return Err(DecodeError::ChunkTooShort);
             }
             let serial = data[0];
             let slices = data[1];
@@ -1029,7 +1064,7 @@ mod tests {
 
             if serial == 0 {
                 if data.len() < 9 {
-                    return Err("IW44 first chunk header too short");
+                    return Err(DecodeError::HeaderTooShort);
                 }
                 let majver = data[2];
                 let minor = data[3];
@@ -1054,7 +1089,7 @@ mod tests {
                 payload_start = 9;
             } else {
                 if img.y_codec.is_none() {
-                    return Err("IW44 subsequent chunk before first chunk");
+                    return Err(DecodeError::MissingFirstChunk);
                 }
                 payload_start = 2;
             }
