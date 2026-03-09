@@ -108,11 +108,13 @@ fn dilate_mask_indexed(mask: Bitmap, blit_map: Vec<i32>, passes: u32) -> (Bitmap
 // ============================================================
 
 fn composite_bg_only(w: u32, h: u32, bg: &Pixmap, page_w: u32, page_h: u32) -> Pixmap {
+    let mapper = PageMapper::new(w, h, page_w, page_h);
+    let bg_samp = BilinearSampler::new(bg, page_w, page_h);
     let mut out = Pixmap::white(w, h);
     for y in 0..h {
         for x in 0..w {
-            let (px, py) = map_to_page(x, y, w, h, page_w, page_h);
-            let (r, g, b) = sample_bilinear_virtual(bg, px, py, page_w, page_h);
+            let (px, py) = mapper.map(x, y);
+            let (r, g, b) = bg_samp.sample(bg, px, py);
             out.set_rgb(x, y, r, g, b);
         }
     }
@@ -125,9 +127,39 @@ fn composite_bg_only(w: u32, h: u32, bg: &Pixmap, page_w: u32, page_h: u32) -> P
 
 fn composite_bilevel(w: u32, h: u32, mask: &Bitmap, page_w: u32, page_h: u32) -> Pixmap {
     let mut out = Pixmap::white(w, h);
+
+    // Fast path: when output matches page size exactly, process mask bytes directly
+    if w == page_w && h == page_h && w == mask.width && h == mask.height {
+        let stride = mask.row_stride();
+        for y in 0..h {
+            let row_base = y as usize * stride;
+            let mut x = 0u32;
+            // Process 8 pixels at a time from packed mask bytes
+            for byte_idx in 0..(w as usize + 7) / 8 {
+                let byte = mask.data[row_base + byte_idx];
+                if byte == 0 {
+                    // All 8 pixels white — skip
+                    x += 8;
+                    continue;
+                }
+                // Unpack up to 8 bits
+                let remaining = (w - x).min(8);
+                for bit in 0..remaining {
+                    if byte & (0x80 >> bit) != 0 {
+                        out.set_rgb(x + bit, y, 0, 0, 0);
+                    }
+                }
+                x += 8;
+            }
+        }
+        return out;
+    }
+
+    let mapper = PageMapper::new(w, h, page_w, page_h);
     for y in 0..h {
         for x in 0..w {
-            if sample_mask(mask, x, y, w, h, page_w, page_h) {
+            let (mx, my) = mapper.map(x, y);
+            if mx < mask.width && my < mask.height && mask.get(mx, my) {
                 out.set_rgb(x, y, 0, 0, 0);
             }
         }
@@ -147,11 +179,17 @@ fn composite_mask_bg(
     page_w: u32,
     page_h: u32,
 ) -> Pixmap {
-    let mut out = composite_bg_only(w, h, bg, page_w, page_h);
+    let mapper = PageMapper::new(w, h, page_w, page_h);
+    let bg_samp = BilinearSampler::new(bg, page_w, page_h);
+    let mut out = Pixmap::white(w, h);
     for y in 0..h {
         for x in 0..w {
-            if sample_mask(mask, x, y, w, h, page_w, page_h) {
+            let (px, py) = mapper.map(x, y);
+            if px < mask.width && py < mask.height && mask.get(px, py) {
                 out.set_rgb(x, y, 0, 0, 0);
+            } else {
+                let (r, g, b) = bg_samp.sample(bg, px, py);
+                out.set_rgb(x, y, r, g, b);
             }
         }
     }
@@ -170,12 +208,14 @@ fn composite_mask_fg(
     page_w: u32,
     page_h: u32,
 ) -> Pixmap {
+    let mapper = PageMapper::new(w, h, page_w, page_h);
+    let fg_samp = NearestSampler::new(fg, page_w, page_h);
     let mut out = Pixmap::white(w, h);
     for y in 0..h {
         for x in 0..w {
-            let (px, py) = map_to_page(x, y, w, h, page_w, page_h);
+            let (px, py) = mapper.map(x, y);
             if px < mask.width && py < mask.height && mask.get(px, py) {
-                let (r, g, b) = sample_nearest_virtual(fg, px, py, page_w, page_h);
+                let (r, g, b) = fg_samp.sample(fg, px, py);
                 out.set_rgb(x, y, r, g, b);
             }
         }
@@ -196,15 +236,18 @@ fn composite_3layer(
     page_w: u32,
     page_h: u32,
 ) -> Pixmap {
+    let mapper = PageMapper::new(w, h, page_w, page_h);
+    let fg_samp = NearestSampler::new(fg, page_w, page_h);
+    let bg_samp = BilinearSampler::new(bg, page_w, page_h);
     let mut out = Pixmap::white(w, h);
     for y in 0..h {
         for x in 0..w {
-            let (px, py) = map_to_page(x, y, w, h, page_w, page_h);
+            let (px, py) = mapper.map(x, y);
             if px < mask.width && py < mask.height && mask.get(px, py) {
-                let (r, g, b) = sample_nearest_virtual(fg, px, py, page_w, page_h);
+                let (r, g, b) = fg_samp.sample(fg, px, py);
                 out.set_rgb(x, y, r, g, b);
             } else {
-                let (r, g, b) = sample_bilinear_virtual(bg, px, py, page_w, page_h);
+                let (r, g, b) = bg_samp.sample(bg, px, py);
                 out.set_rgb(x, y, r, g, b);
             }
         }
@@ -271,10 +314,12 @@ fn composite_palette(
     page_w: u32,
     page_h: u32,
 ) -> Pixmap {
+    let mapper = PageMapper::new(w, h, page_w, page_h);
+    let bg_samp = BilinearSampler::new(bg, page_w, page_h);
     let mut out = Pixmap::white(w, h);
     for y in 0..h {
         for x in 0..w {
-            let (mx, my) = map_to_page(x, y, w, h, page_w, page_h);
+            let (mx, my) = mapper.map(x, y);
             let is_fg = mx < mask.width && my < mask.height && mask.get(mx, my);
             if is_fg {
                 let mi = my as usize * mask.width as usize + mx as usize;
@@ -285,7 +330,7 @@ fn composite_palette(
                 };
                 out.set_rgb(x, y, r, g, b);
             } else {
-                let (r, g, b) = sample_bilinear_virtual(bg, mx, my, page_w, page_h);
+                let (r, g, b) = bg_samp.sample(bg, mx, my);
                 out.set_rgb(x, y, r, g, b);
             }
         }
@@ -302,10 +347,11 @@ fn composite_palette_no_bg(
     page_w: u32,
     page_h: u32,
 ) -> Pixmap {
+    let mapper = PageMapper::new(w, h, page_w, page_h);
     let mut out = Pixmap::white(w, h);
     for y in 0..h {
         for x in 0..w {
-            let (mx, my) = map_to_page(x, y, w, h, page_w, page_h);
+            let (mx, my) = mapper.map(x, y);
             if mx < mask.width && my < mask.height && mask.get(mx, my) {
                 let mi = my as usize * mask.width as usize + mx as usize;
                 let (r, g, b) = if mi < blit_map.len() {
@@ -321,28 +367,147 @@ fn composite_palette_no_bg(
 }
 
 // ============================================================
-// Generalized sampling: maps output coords → source coords
+// Precomputed geometry for sampling — avoids per-pixel recomputation
 // ============================================================
 
-/// Map output pixel (x,y) at output size (ow,oh) to page coordinates (page_w, page_h).
-fn map_to_page(x: u32, y: u32, ow: u32, oh: u32, page_w: u32, page_h: u32) -> (u32, u32) {
-    let px = if ow == page_w {
-        x
-    } else {
-        ((x as f64 + 0.5) * page_w as f64 / ow as f64) as u32
-    };
-    let py = if oh == page_h {
-        y
-    } else {
-        ((y as f64 + 0.5) * page_h as f64 / oh as f64) as u32
-    };
-    (px.min(page_w - 1), py.min(page_h - 1))
+/// Precomputed scale factors for mapping output coords → page coords.
+struct PageMapper {
+    scale_x: f64,  // page_w / ow
+    scale_y: f64,  // page_h / oh
+    max_x: u32,    // page_w - 1
+    max_y: u32,    // page_h - 1
+    identity_x: bool,
+    identity_y: bool,
 }
 
-/// Sample mask at output coordinates, mapping through page coordinates.
-fn sample_mask(mask: &Bitmap, x: u32, y: u32, ow: u32, oh: u32, page_w: u32, page_h: u32) -> bool {
-    let (mx, my) = map_to_page(x, y, ow, oh, page_w, page_h);
-    mx < mask.width && my < mask.height && mask.get(mx, my)
+impl PageMapper {
+    fn new(ow: u32, oh: u32, page_w: u32, page_h: u32) -> Self {
+        PageMapper {
+            scale_x: page_w as f64 / ow as f64,
+            scale_y: page_h as f64 / oh as f64,
+            max_x: page_w.saturating_sub(1),
+            max_y: page_h.saturating_sub(1),
+            identity_x: ow == page_w,
+            identity_y: oh == page_h,
+        }
+    }
+
+    #[inline(always)]
+    fn map(&self, x: u32, y: u32) -> (u32, u32) {
+        let px = if self.identity_x {
+            x
+        } else {
+            ((x as f64 + 0.5) * self.scale_x) as u32
+        };
+        let py = if self.identity_y {
+            y
+        } else {
+            ((y as f64 + 0.5) * self.scale_y) as u32
+        };
+        (px.min(self.max_x), py.min(self.max_y))
+    }
+}
+
+/// Precomputed geometry for nearest-neighbor sampling from a layer.
+struct NearestSampler {
+    reduction: u32,
+    virt_page_w_m1: u32,
+    virt_page_h_m1: u32,
+    y_shift: u32,
+    src_w_m1: u32,
+    src_h_m1: u32,
+}
+
+impl NearestSampler {
+    fn new(src: &Pixmap, page_w: u32, page_h: u32) -> Self {
+        let (reduction, _, _, virt_page_w, virt_page_h) = layer_virtual_geometry(src, page_w, page_h);
+        let y_shift = src.height.saturating_mul(reduction).saturating_sub(page_h);
+        NearestSampler {
+            reduction,
+            virt_page_w_m1: virt_page_w.saturating_sub(1),
+            virt_page_h_m1: virt_page_h.saturating_sub(1),
+            y_shift,
+            src_w_m1: src.width.saturating_sub(1),
+            src_h_m1: src.height.saturating_sub(1),
+        }
+    }
+
+    #[inline(always)]
+    fn sample(&self, src: &Pixmap, page_x: u32, page_y: u32) -> (u8, u8, u8) {
+        let px = page_x.min(self.virt_page_w_m1);
+        let py = page_y.saturating_add(self.y_shift).min(self.virt_page_h_m1);
+        let sx = (px / self.reduction).min(self.src_w_m1);
+        let sy = (py / self.reduction).min(self.src_h_m1);
+        src.get_rgb(sx, sy)
+    }
+}
+
+/// Precomputed geometry for bilinear sampling from a layer.
+///
+/// Precomputes all constants that are invariant across pixels, keeping only
+/// 2 f64 multiplies + clamps in the per-pixel hot path.
+struct BilinearSampler {
+    scale_x: f64,   // virt_w / virt_page_w
+    scale_y: f64,   // virt_h / virt_page_h
+    sw_m1: f64,
+    sh_m1: f64,
+    virt_page_w_m1: u32,
+    virt_page_h_m1: u32,
+    clamp_x: u32,   // min(virt_w-1, src_w-1)
+    clamp_y: u32,   // min(virt_h-1, src_h-1)
+    src_w_m1: u32,
+    src_h_m1: u32,
+}
+
+impl BilinearSampler {
+    fn new(src: &Pixmap, page_w: u32, page_h: u32) -> Self {
+        let (_, virt_w, virt_h, virt_page_w, virt_page_h) = layer_virtual_geometry(src, page_w, page_h);
+        let sw = virt_w as f64;
+        let sh = virt_h as f64;
+        BilinearSampler {
+            scale_x: sw / virt_page_w as f64,
+            scale_y: sh / virt_page_h as f64,
+            sw_m1: sw - 1.0,
+            sh_m1: sh - 1.0,
+            virt_page_w_m1: virt_page_w.saturating_sub(1),
+            virt_page_h_m1: virt_page_h.saturating_sub(1),
+            clamp_x: virt_w.saturating_sub(1).min(src.width.saturating_sub(1)),
+            clamp_y: virt_h.saturating_sub(1).min(src.height.saturating_sub(1)),
+            src_w_m1: src.width.saturating_sub(1),
+            src_h_m1: src.height.saturating_sub(1),
+        }
+    }
+
+    #[inline(always)]
+    fn sample(&self, src: &Pixmap, page_x: u32, page_y: u32) -> (u8, u8, u8) {
+        let px = page_x.min(self.virt_page_w_m1);
+        let py = page_y.min(self.virt_page_h_m1);
+        let sx = ((px as f64 + 0.5) * self.scale_x - 0.5).clamp(0.0, self.sw_m1);
+        let sy = ((py as f64 + 0.5) * self.scale_y - 0.5).clamp(0.0, self.sh_m1);
+
+        let sx0 = sx as u32;
+        let sy0 = sy as u32;
+        let sx1 = (sx0 + 1).min(self.clamp_x);
+        let sy1 = (sy0 + 1).min(self.clamp_y);
+        let fx = ((sx - sx0 as f64) * 16.0 + 0.5).floor().clamp(0.0, 15.0) as u32;
+        let fy = ((sy - sy0 as f64) * 16.0 + 0.5).floor().clamp(0.0, 15.0) as u32;
+
+        let (r00, g00, b00) = src.get_rgb(sx0.min(self.src_w_m1), sy0.min(self.src_h_m1));
+        let (r10, g10, b10) = src.get_rgb(sx1, sy0.min(self.src_h_m1));
+        let (r01, g01, b01) = src.get_rgb(sx0.min(self.src_w_m1), sy1);
+        let (r11, g11, b11) = src.get_rgb(sx1, sy1);
+        let interp_h = |v0: u8, v1: u8| -> u32 {
+            ((v0 as u32 * (16 - fx) + v1 as u32 * fx + 8) >> 4).clamp(0, 255)
+        };
+        let interp_v = |v0: u32, v1: u32| -> u8 {
+            ((v0 * (16 - fy) + v1 * fy + 8) >> 4).clamp(0, 255) as u8
+        };
+        (
+            interp_v(interp_h(r00, r10), interp_h(r01, r11)),
+            interp_v(interp_h(g00, g10), interp_h(g01, g11)),
+            interp_v(interp_h(b00, b10), interp_h(b01, b11)),
+        )
+    }
 }
 
 fn layer_virtual_geometry(src: &Pixmap, page_w: u32, page_h: u32) -> (u32, u32, u32, u32, u32) {
@@ -356,26 +521,7 @@ fn layer_virtual_geometry(src: &Pixmap, page_w: u32, page_h: u32) -> (u32, u32, 
     (reduction, virt_w, virt_h, virt_page_w, virt_page_h)
 }
 
-fn sample_nearest_virtual(
-    src: &Pixmap,
-    page_x: u32,
-    page_y: u32,
-    page_w: u32,
-    page_h: u32,
-) -> (u8, u8, u8) {
-    let (reduction, _, _, virt_page_w, virt_page_h) = layer_virtual_geometry(src, page_w, page_h);
-    let px = page_x.min(virt_page_w - 1);
-    // IW44 rows are flipped during decode. When the raw layer height contains
-    // one padding row beyond the logical reduced height, the padding ends up on
-    // the top edge of the page and must be trimmed there rather than at the
-    // bottom. Horizontal padding is already dropped on the right by virt_page_w.
-    let y_shift = src.height.saturating_mul(reduction).saturating_sub(page_h);
-    let py = page_y.saturating_add(y_shift).min(virt_page_h - 1);
-    let sx = (px / reduction).min(src.width - 1);
-    let sy = (py / reduction).min(src.height - 1);
-    src.get_rgb(sx, sy)
-}
-
+#[cfg(test)]
 fn sample_bilinear_virtual(
     src: &Pixmap,
     page_x: u32,
@@ -383,36 +529,8 @@ fn sample_bilinear_virtual(
     page_w: u32,
     page_h: u32,
 ) -> (u8, u8, u8) {
-    let (_, virt_w, virt_h, virt_page_w, virt_page_h) = layer_virtual_geometry(src, page_w, page_h);
-    let sw = virt_w as f64;
-    let sh = virt_h as f64;
-    let dw = virt_page_w as f64;
-    let dh = virt_page_h as f64;
-    let px = page_x.min(virt_page_w - 1);
-    let py = page_y.min(virt_page_h - 1);
-    let sx = ((px as f64 + 0.5) * sw / dw - 0.5).clamp(0.0, sw - 1.0);
-    let sy = ((py as f64 + 0.5) * sh / dh - 0.5).clamp(0.0, sh - 1.0);
-
-    let sx0 = sx as u32;
-    let sy0 = sy as u32;
-    let sx1 = (sx0 + 1).min(virt_w.saturating_sub(1)).min(src.width - 1);
-    let sy1 = (sy0 + 1).min(virt_h.saturating_sub(1)).min(src.height - 1);
-    let fx = ((sx - sx0 as f64) * 16.0 + 0.5).floor().clamp(0.0, 15.0) as u32;
-    let fy = ((sy - sy0 as f64) * 16.0 + 0.5).floor().clamp(0.0, 15.0) as u32;
-    let (r00, g00, b00) = src.get_rgb(sx0.min(src.width - 1), sy0.min(src.height - 1));
-    let (r10, g10, b10) = src.get_rgb(sx1, sy0.min(src.height - 1));
-    let (r01, g01, b01) = src.get_rgb(sx0.min(src.width - 1), sy1);
-    let (r11, g11, b11) = src.get_rgb(sx1, sy1);
-    let interp_h = |v0: u8, v1: u8| -> u32 {
-        ((v0 as u32 * (16 - fx) + v1 as u32 * fx + 8) >> 4).clamp(0, 255)
-    };
-    let interp_v =
-        |v0: u32, v1: u32| -> u8 { ((v0 * (16 - fy) + v1 * fy + 8) >> 4).clamp(0, 255) as u8 };
-    (
-        interp_v(interp_h(r00, r10), interp_h(r01, r11)),
-        interp_v(interp_h(g00, g10), interp_h(g01, g11)),
-        interp_v(interp_h(b00, b10), interp_h(b01, b11)),
-    )
+    let sampler = BilinearSampler::new(src, page_w, page_h);
+    sampler.sample(src, page_x, page_y)
 }
 
 #[cfg(test)]

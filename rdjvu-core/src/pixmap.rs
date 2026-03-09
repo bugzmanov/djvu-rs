@@ -29,6 +29,7 @@ impl Pixmap {
     }
 
     /// Set pixel at (x, y) to an RGB value (alpha = 255).
+    #[inline]
     pub fn set_rgb(&mut self, x: u32, y: u32, r: u8, g: u8, b: u8) {
         let idx = (y as usize * self.width as usize + x as usize) * 4;
         self.data[idx] = r;
@@ -38,6 +39,7 @@ impl Pixmap {
     }
 
     /// Get RGB at (x, y).
+    #[inline]
     pub fn get_rgb(&self, x: u32, y: u32) -> (u8, u8, u8) {
         let idx = (y as usize * self.width as usize + x as usize) * 4;
         (self.data[idx], self.data[idx + 1], self.data[idx + 2])

@@ -23,6 +23,7 @@ impl Bitmap {
     }
 
     /// Bytes per row (each row padded to byte boundary).
+    #[inline]
     pub fn row_stride(&self) -> usize {
         Self::compute_row_stride(self.width)
     }
@@ -33,6 +34,7 @@ impl Bitmap {
 
     /// Get pixel value at (x, y). Returns `true` if black (1).
     /// Panics if out of bounds.
+    #[inline]
     pub fn get(&self, x: u32, y: u32) -> bool {
         debug_assert!(x < self.width && y < self.height);
         let stride = self.row_stride();
