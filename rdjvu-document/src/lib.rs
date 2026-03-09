@@ -219,6 +219,57 @@ impl<'a> Document<'a> {
         Ok(bookmarks)
     }
 
+    /// Decode a thumbnail for the given page (0-based index).
+    ///
+    /// Thumbnails are stored in FORM:THUM components with TH44 (IW44) chunks.
+    /// Returns `Ok(None)` if no thumbnail exists for this page.
+    pub fn thumbnail(&self, page_index: usize) -> Result<Option<Pixmap>, Error> {
+        if self.is_single_page {
+            return Ok(None);
+        }
+
+        let mut thumb_idx: usize = 0;
+        for (i, entry) in self.dirm_entries.iter().enumerate() {
+            if entry.comp_type != ComponentType::Thumbnail {
+                continue;
+            }
+            let form = self.get_component_form(i)?;
+            let th44_chunks: Vec<&[u8]> = form.find_all(b"TH44")
+                .into_iter()
+                .map(|c| c.data())
+                .collect();
+
+            let mut img = IW44Image::new();
+            for chunk_data in &th44_chunks {
+                if chunk_data.is_empty() { continue; }
+                let serial = chunk_data[0];
+                if serial == 0 && img.width() > 0 {
+                    // Previous thumbnail is complete
+                    if thumb_idx == page_index {
+                        let pm = img.to_pixmap()
+                            .map_err(|e| Error::FormatError(e.to_string()))?;
+                        return Ok(Some(pm));
+                    }
+                    thumb_idx += 1;
+                    img = IW44Image::new();
+                }
+                img.decode_chunk(chunk_data)
+                    .map_err(|e| Error::FormatError(e.to_string()))?;
+            }
+            // Handle last thumbnail in this THUM
+            if img.width() > 0 {
+                if thumb_idx == page_index {
+                    let pm = img.to_pixmap()
+                        .map_err(|e| Error::FormatError(e.to_string()))?;
+                    return Ok(Some(pm));
+                }
+                thumb_idx += 1;
+            }
+        }
+
+        Ok(None)
+    }
+
     /// Resolve an INCL reference to a shared DJVI component's children.
     fn resolve_incl(&self, ref_id: &str) -> Result<&Chunk<'a>, Error> {
         if self.is_single_page {
@@ -1261,5 +1312,51 @@ mod tests {
             let result = doc.page(i).unwrap().text_layer();
             assert!(result.is_ok(), "text_layer failed for djvu3spec page {}", i);
         }
+    }
+
+    // --- Thumbnail tests ---
+
+    #[test]
+    fn thumbnail_carte() {
+        let data = std::fs::read(assets_path().join("carte.djvu")).unwrap();
+        let doc = Document::parse(&data).unwrap();
+        let thumb = doc.thumbnail(0).unwrap().expect("carte should have a thumbnail");
+        // Thumbnail should be much smaller than the page (4200x2556)
+        assert!(thumb.width > 0 && thumb.width < 500, "thumb width: {}", thumb.width);
+        assert!(thumb.height > 0 && thumb.height < 500, "thumb height: {}", thumb.height);
+        assert_eq!(thumb.data.len(), thumb.width as usize * thumb.height as usize * 4);
+    }
+
+    #[test]
+    fn thumbnail_djvu3spec_all_pages() {
+        let data = std::fs::read(assets_path().join("DjVu3Spec_bundled.djvu")).unwrap();
+        let doc = Document::parse(&data).unwrap();
+        let mut count = 0;
+        for i in 0..doc.page_count() {
+            if let Some(thumb) = doc.thumbnail(i).unwrap() {
+                assert!(thumb.width > 0 && thumb.height > 0, "page {} thumb empty", i);
+                assert_eq!(
+                    thumb.data.len(),
+                    thumb.width as usize * thumb.height as usize * 4,
+                    "page {} thumb data mismatch", i
+                );
+                count += 1;
+            }
+        }
+        assert_eq!(count, 71, "expected 71 thumbnails, got {}", count);
+    }
+
+    #[test]
+    fn thumbnail_none_for_single_page() {
+        let data = std::fs::read(assets_path().join("boy_jb2.djvu")).unwrap();
+        let doc = Document::parse(&data).unwrap();
+        assert!(doc.thumbnail(0).unwrap().is_none());
+    }
+
+    #[test]
+    fn thumbnail_none_for_no_thum() {
+        let data = std::fs::read(assets_path().join("colorbook.djvu")).unwrap();
+        let doc = Document::parse(&data).unwrap();
+        assert!(doc.thumbnail(0).unwrap().is_none());
     }
 }

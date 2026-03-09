@@ -167,6 +167,13 @@ impl<'a> Page<'a> {
         rdjvu_render::render_aa(&page, width, height, boldness)
     }
 
+    /// Decode the page thumbnail, if available.
+    ///
+    /// Returns `Ok(None)` if no thumbnail exists for this page.
+    pub fn thumbnail(&self) -> Result<Option<Pixmap>, Error> {
+        self.doc.parsed.thumbnail(self.index)
+    }
+
     /// Extract the text layer (TXTz/TXTa) with zone hierarchy.
     ///
     /// Returns `Ok(None)` if the page has no text layer.
@@ -439,6 +446,20 @@ mod tests {
     fn text_none_for_image_only() {
         let doc = Document::open(assets_path().join("chicken.djvu")).unwrap();
         assert!(doc.page(0).unwrap().text().unwrap().is_none());
+    }
+
+    #[test]
+    fn thumbnail_carte() {
+        let doc = Document::open(assets_path().join("carte.djvu")).unwrap();
+        let thumb = doc.page(0).unwrap().thumbnail().unwrap().expect("carte should have thumbnail");
+        assert!(thumb.width > 0 && thumb.width < 500);
+        assert!(thumb.height > 0 && thumb.height < 500);
+    }
+
+    #[test]
+    fn thumbnail_none_for_image_only() {
+        let doc = Document::open(assets_path().join("chicken.djvu")).unwrap();
+        assert!(doc.page(0).unwrap().thumbnail().unwrap().is_none());
     }
 
     #[test]
