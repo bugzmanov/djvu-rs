@@ -63,6 +63,7 @@ impl<'a> ZPDecoder<'a> {
         dec
     }
 
+    #[inline(always)]
     fn read_byte(&mut self) -> u8 {
         if self.pos < self.data.len() {
             let b = self.data[self.pos];
@@ -73,6 +74,7 @@ impl<'a> ZPDecoder<'a> {
         }
     }
 
+    #[inline(always)]
     fn preload(&mut self) {
         while self.scount <= 24 {
             let byte = self.read_byte();
@@ -83,6 +85,7 @@ impl<'a> ZPDecoder<'a> {
 
     /// Decode one bit using an adaptive context.
     /// `ctx` is a mutable reference to a context state byte.
+    #[inline(always)]
     pub fn decode(&mut self, ctx: &mut u8) -> bool {
         let st = *ctx as usize;
         let b_mps = st & 1;
@@ -140,6 +143,7 @@ impl<'a> ZPDecoder<'a> {
     /// Decode one bit without adaptive context (standard passthrough).
     /// Uses threshold z = 0x8000 + (a >> 1).
     /// This is used by BZZ's decode_raw.
+    #[inline(always)]
     pub fn decode_passthrough(&mut self) -> bool {
         let z = 0x8000u16.wrapping_add(self.a >> 1);
         self.decode_passthrough_with_z(z)
@@ -148,11 +152,13 @@ impl<'a> ZPDecoder<'a> {
     /// Decode one bit without adaptive context (IW44 variant).
     /// Uses threshold z = 0x8000 + (3*a >> 3).
     /// This is used by IW44 image decoding.
+    #[inline(always)]
     pub fn decode_iw(&mut self) -> bool {
         let z = (0x8000u32 + (3u32 * self.a as u32) / 8) as u16;
         self.decode_passthrough_with_z(z)
     }
 
+    #[inline(always)]
     fn decode_passthrough_with_z(&mut self, z: u16) -> bool {
 
         if z > self.c {

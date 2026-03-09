@@ -138,6 +138,7 @@ impl Jbm {
         }
     }
 
+    #[inline(always)]
     fn get(&self, row: i32, col: i32) -> u8 {
         if row < 0 || row >= self.height || col < 0 || col >= self.width {
             return 0;
@@ -145,18 +146,11 @@ impl Jbm {
         self.data[(row * self.width + col) as usize]
     }
 
+    #[inline(always)]
     fn set(&mut self, row: i32, col: i32) {
         if row >= 0 && row < self.height && col >= 0 && col < self.width {
             self.data[(row * self.width + col) as usize] = 1;
         }
-    }
-
-    fn get_bits(&self, row: i32, col: i32, n: i32) -> u32 {
-        let mut result = 0u32;
-        for k in 0..n {
-            result = (result << 1) | self.get(row, col + k) as u32;
-        }
-        result
     }
 
     fn remove_empty_edges(&self) -> Jbm {
@@ -243,25 +237,32 @@ impl Baseline {
 // Bitmap decode: direct (10-bit context)
 // ============================================================
 
-fn compute_ctx_direct(bm: &Jbm, row: i32, col: i32) -> usize {
-    // Row i+2: 3 bits at cols j-1, j, j+1 → bits [9:7]
-    let mut index: u32 = bm.get_bits(row + 2, col - 1, 3) << 7;
-    // Row i+1: 5 bits at cols j-2..j+2 → bits [6:2]
-    index |= bm.get_bits(row + 1, col - 2, 5) << 2;
-    // Row i: 2 bits at cols j-2, j-1 → bits [1:0]
-    index |= bm.get_bits(row, col - 2, 2);
-    index as usize
-}
-
 fn decode_bitmap_direct(zp: &mut ZPDecoder, ctx: &mut [u8], width: i32, height: i32) -> Jbm {
     let mut bm = Jbm::new(width, height);
-    // Decode top-to-bottom (row height-1 down to 0), left-to-right
+    // Decode top-to-bottom (row height-1 down to 0), left-to-right.
+    // Use incremental context computation: maintain rolling bit windows
+    // for rows above, advancing by 1 bit per column instead of recomputing
+    // all 10 context bits from scratch each pixel.
     for row in (0..height).rev() {
+        // r2: 3 bits from (row+2, col-1..col+1) — at col=0, col-1=-1 gives 0
+        let mut r2 = (bm.get(row + 2, 0) as u32) << 1 | bm.get(row + 2, 1) as u32;
+        // r1: 5 bits from (row+1, col-2..col+2) — at col=0, col-2 and col-1 give 0
+        let mut r1 = (bm.get(row + 1, 0) as u32) << 2
+            | (bm.get(row + 1, 1) as u32) << 1
+            | bm.get(row + 1, 2) as u32;
+        // r0: 2 bits from (row, col-2, col-1) — at col=0, both are 0
+        let mut r0: u32 = 0;
+
         for col in 0..width {
-            let idx = compute_ctx_direct(&bm, row, col);
-            if zp.decode(&mut ctx[idx]) {
+            let idx = (r2 << 7) | (r1 << 2) | r0;
+            let bit = zp.decode(&mut ctx[idx as usize]);
+            if bit {
                 bm.set(row, col);
             }
+            // Advance rolling windows for next column
+            r2 = ((r2 << 1) & 0b111) | bm.get(row + 2, col + 2) as u32;
+            r1 = ((r1 << 1) & 0b11111) | bm.get(row + 1, col + 3) as u32;
+            r0 = ((r0 << 1) & 0b11) | bit as u32;
         }
     }
     bm
@@ -270,20 +271,6 @@ fn decode_bitmap_direct(zp: &mut ZPDecoder, ctx: &mut [u8], width: i32, height: 
 // ============================================================
 // Bitmap decode: refinement (11-bit context)
 // ============================================================
-
-fn compute_ctx_ref(cbm: &Jbm, mbm: &Jbm, row: i32, col: i32, row_shift: i32, col_shift: i32) -> usize {
-    // Current bitmap, row i+1: 3 bits at cols j-1, j, j+1 → bits [10:8]
-    let mut index: u32 = cbm.get_bits(row + 1, col - 1, 3) << 8;
-    // Current bitmap, row i: 1 bit at col j-1 → bit [7]
-    index |= (cbm.get(row, col - 1) as u32) << 7;
-    // Reference bitmap, row (i+rowshift+1), col (j+colshift) → bit [6]
-    index |= (mbm.get(row + row_shift + 1, col + col_shift) as u32) << 6;
-    // Reference bitmap, row (i+rowshift): 3 bits at cols (j+colshift-1..+1) → bits [5:3]
-    index |= mbm.get_bits(row + row_shift, col + col_shift - 1, 3) << 3;
-    // Reference bitmap, row (i+rowshift-1): 3 bits at cols (j+colshift-1..+1) → bits [2:0]
-    index |= mbm.get_bits(row + row_shift - 1, col + col_shift - 1, 3);
-    index as usize
-}
 
 fn decode_bitmap_ref(
     zp: &mut ZPDecoder,
@@ -301,12 +288,37 @@ fn decode_bitmap_ref(
     let row_shift = mrow - crow;
     let col_shift = mcol - ccol;
 
+    // Incremental context: maintain rolling bit windows
     for row in (0..height).rev() {
+        let mr = row + row_shift;
+        let cs = col_shift; // col_shift + 0, for col=0
+
+        // cbm row+1: 3 bits at (col-1, col, col+1) — col-1=-1 gives 0
+        let mut c_r1 = (cbm.get(row + 1, 0) as u32) << 1 | cbm.get(row + 1, 1) as u32;
+        // cbm row, col-1: single bit — col-1=-1 gives 0
+        let mut c_r0: u32 = 0;
+        // mbm (mr, cs+col-1..cs+col+1): 3 bits
+        let mut m_r1 = (mbm.get(mr, cs - 1) as u32) << 2
+            | (mbm.get(mr, cs) as u32) << 1
+            | mbm.get(mr, cs + 1) as u32;
+        // mbm (mr-1, cs+col-1..cs+col+1): 3 bits
+        let mut m_r0 = (mbm.get(mr - 1, cs - 1) as u32) << 2
+            | (mbm.get(mr - 1, cs) as u32) << 1
+            | mbm.get(mr - 1, cs + 1) as u32;
+
         for col in 0..width {
-            let idx = compute_ctx_ref(&cbm, mbm, row, col, row_shift, col_shift);
-            if zp.decode(&mut ctx[idx]) {
+            // mbm (mr+1, col+cs): single bit, no window to maintain
+            let m_r2 = mbm.get(mr + 1, col + col_shift) as u32;
+            let idx = (c_r1 << 8) | (c_r0 << 7) | (m_r2 << 6) | (m_r1 << 3) | m_r0;
+            let bit = zp.decode(&mut ctx[idx as usize]);
+            if bit {
                 cbm.set(row, col);
             }
+            // Advance rolling windows for next column
+            c_r1 = ((c_r1 << 1) & 0b111) | cbm.get(row + 1, col + 2) as u32;
+            c_r0 = bit as u32;
+            m_r1 = ((m_r1 << 1) & 0b111) | mbm.get(mr, col + col_shift + 2) as u32;
+            m_r0 = ((m_r0 << 1) & 0b111) | mbm.get(mr - 1, col + col_shift + 2) as u32;
         }
     }
     cbm
@@ -331,16 +343,36 @@ impl JB2Dict {
 // ============================================================
 
 fn blit(page: &mut Vec<u8>, mut blit_map: Option<&mut Vec<i32>>, blit_idx: i32, page_w: i32, page_h: i32, symbol: &Jbm, x: i32, y: i32) {
-    for row in 0..symbol.height {
-        for col in 0..symbol.width {
-            if symbol.get(row, col) != 0 {
-                let px = x + col;
-                let py = y + row;
-                if px >= 0 && px < page_w && py >= 0 && py < page_h {
-                    let idx = (py * page_w + px) as usize;
-                    page[idx] = 1;
+    // Fast path: symbol fully within page bounds — skip per-pixel bounds checks
+    if x >= 0 && y >= 0 && x + symbol.width <= page_w && y + symbol.height <= page_h {
+        let pw = page_w as usize;
+        let sw = symbol.width as usize;
+        for row in 0..symbol.height as usize {
+            let sym_off = row * sw;
+            let page_off = (y as usize + row) * pw + x as usize;
+            for col in 0..sw {
+                if symbol.data[sym_off + col] != 0 {
+                    page[page_off + col] = 1;
                     if let Some(ref mut map) = blit_map {
-                        map[idx] = blit_idx;
+                        map[page_off + col] = blit_idx;
+                    }
+                }
+            }
+        }
+    } else {
+        // Slow path: symbol partially outside page, need per-pixel bounds checking
+        for row in 0..symbol.height {
+            let py = y + row;
+            if py < 0 || py >= page_h { continue; }
+            for col in 0..symbol.width {
+                if symbol.get(row, col) != 0 {
+                    let px = x + col;
+                    if px >= 0 && px < page_w {
+                        let idx = (py * page_w + px) as usize;
+                        page[idx] = 1;
+                        if let Some(ref mut map) = blit_map {
+                            map[idx] = blit_idx;
+                        }
                     }
                 }
             }
@@ -353,13 +385,44 @@ fn blit(page: &mut Vec<u8>, mut blit_map: Option<&mut Vec<i32>>, blit_idx: i32, 
 // ============================================================
 
 fn page_to_bitmap(page: &[u8], width: i32, height: i32) -> Bitmap {
+    let w = width as usize;
+    let h = height as usize;
     let mut bm = Bitmap::new(width as u32, height as u32);
-    for row in 0..height {
-        for col in 0..width {
-            if page[(row * width + col) as usize] != 0 {
-                let pbm_y = (height - 1 - row) as u32;
-                bm.set(col as u32, pbm_y, true);
+    let stride = bm.row_stride();
+
+    // Process 8 source pixels at a time, packing directly into destination bytes.
+    // Avoids per-pixel Bitmap::set() which recomputes stride and byte/bit indices.
+    let full_bytes = w / 8;
+    let remaining = w % 8;
+
+    for row in 0..h {
+        let src_row = &page[row * w..(row + 1) * w];
+        let dst_y = h - 1 - row; // flip: JB2 row 0=bottom → PBM row 0=top
+        let dst_off = dst_y * stride;
+
+        for byte_idx in 0..full_bytes {
+            let base = byte_idx * 8;
+            let mut byte_val = 0u8;
+            if src_row[base] != 0 { byte_val |= 0x80; }
+            if src_row[base + 1] != 0 { byte_val |= 0x40; }
+            if src_row[base + 2] != 0 { byte_val |= 0x20; }
+            if src_row[base + 3] != 0 { byte_val |= 0x10; }
+            if src_row[base + 4] != 0 { byte_val |= 0x08; }
+            if src_row[base + 5] != 0 { byte_val |= 0x04; }
+            if src_row[base + 6] != 0 { byte_val |= 0x02; }
+            if src_row[base + 7] != 0 { byte_val |= 0x01; }
+            bm.data[dst_off + byte_idx] = byte_val;
+        }
+
+        if remaining > 0 {
+            let base = full_bytes * 8;
+            let mut byte_val = 0u8;
+            for bit in 0..remaining {
+                if src_row[base + bit] != 0 {
+                    byte_val |= 0x80 >> bit;
+                }
             }
+            bm.data[dst_off + full_bytes] = byte_val;
         }
     }
     bm

@@ -358,18 +358,18 @@ struct Bytemap {
 }
 
 impl Bytemap {
-    #[inline]
+    #[inline(always)]
     fn get(&self, row: usize, col: usize) -> i32 {
         self.data[row * self.stride + col] as i32
     }
 
-    #[inline]
+    #[inline(always)]
     fn add(&mut self, row: usize, col: usize, val: i32) {
         self.data[row * self.stride + col] =
             (self.data[row * self.stride + col] as i32 + val) as i16;
     }
 
-    #[inline]
+    #[inline(always)]
     fn sub(&mut self, row: usize, col: usize, val: i32) {
         self.data[row * self.stride + col] =
             (self.data[row * self.stride + col] as i32 - val) as i16;
