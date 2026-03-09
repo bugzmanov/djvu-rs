@@ -9,6 +9,7 @@ description = "Pure Rust DjVu renderer"
 rdjvu-core = { path = "../rdjvu-core" }
 rdjvu-document = { path = "../rdjvu-document" }
 rdjvu-render = { path = "../rdjvu-render" }
+self_cell = "1.2"
 
 [dev-dependencies]
 rdjvu-document = { path = "../rdjvu-document" }

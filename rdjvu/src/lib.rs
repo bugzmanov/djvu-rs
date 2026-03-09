@@ -13,21 +13,30 @@
 //! // pixmap.data: RGBA, pixmap.to_rgb(): RGB
 //! ```
 
+#![forbid(unsafe_code)]
+
 pub use rdjvu_core::{Bitmap, Error, Pixmap};
 pub use rdjvu_document::{Bookmark, TextLayer, TextZone, TextZoneKind};
+
+use self_cell::self_cell;
+
+type ParsedDocument<'a> = rdjvu_document::Document<'a>;
+
+self_cell!(
+    struct DocumentInner {
+        owner: Box<[u8]>,
+
+        #[covariant]
+        dependent: ParsedDocument,
+    }
+);
 
 /// A parsed DjVu document. Owns its data and the parsed structure.
 ///
 /// Parsing happens once at construction time. All subsequent `page()` and
 /// `render()` calls reuse the parsed chunk tree with zero re-parsing overhead.
 pub struct Document {
-    // SAFETY: `parsed` borrows from `_data`. This is sound because:
-    // 1. `_data` is heap-allocated (`Box<[u8]>`) — its address is stable across moves.
-    // 2. Fields drop in declaration order: `parsed` drops first, releasing borrows
-    //    before `_data` is freed.
-    // 3. `_data` is never mutated after construction.
-    parsed: rdjvu_document::Document<'static>,
-    _data: Box<[u8]>,
+    inner: DocumentInner,
 }
 
 impl Document {
@@ -40,29 +49,25 @@ impl Document {
 
     /// Parse a DjVu document from owned bytes.
     pub fn from_bytes(data: Vec<u8>) -> Result<Self, Error> {
-        let data = data.into_boxed_slice();
-        // SAFETY: Extend the borrow lifetime to 'static. Sound because `data` is
-        // heap-allocated, never moved or mutated, and outlives `parsed` (see field
-        // drop order above).
-        let stable_ref: &'static [u8] =
-            unsafe { std::slice::from_raw_parts(data.as_ptr(), data.len()) };
-        let parsed = rdjvu_document::Document::parse(stable_ref)?;
-        Ok(Document { parsed, _data: data })
+        let inner = DocumentInner::try_new(data.into_boxed_slice(), |bytes| {
+            rdjvu_document::Document::parse(bytes)
+        })?;
+        Ok(Document { inner })
     }
 
     /// Parse the NAVM bookmarks (table of contents).
     pub fn bookmarks(&self) -> Result<Vec<Bookmark>, Error> {
-        self.parsed.bookmarks()
+        self.inner.borrow_dependent().bookmarks()
     }
 
     /// Number of pages.
     pub fn page_count(&self) -> usize {
-        self.parsed.page_count()
+        self.inner.borrow_dependent().page_count()
     }
 
     /// Access a page by 0-based index.
     pub fn page(&self, index: usize) -> Result<Page<'_>, Error> {
-        let inner = self.parsed.page(index)?;
+        let inner = self.inner.borrow_dependent().page(index)?;
         Ok(Page {
             width: inner.info.width,
             height: inner.info.height,
@@ -118,7 +123,7 @@ impl<'a> Page<'a> {
 
     /// Render the page to an RGBA pixmap at native resolution.
     pub fn render(&self) -> Result<Pixmap, Error> {
-        let page = self.doc.parsed.page(self.index)?;
+        let page = self.doc.inner.borrow_dependent().page(self.index)?;
         rdjvu_render::render(&page)
     }
 
@@ -127,7 +132,7 @@ impl<'a> Page<'a> {
     /// Layers are composited directly at the target resolution —
     /// no intermediate full-size buffer is allocated.
     pub fn render_to_size(&self, width: u32, height: u32) -> Result<Pixmap, Error> {
-        let page = self.doc.parsed.page(self.index)?;
+        let page = self.doc.inner.borrow_dependent().page(self.index)?;
         rdjvu_render::render_to_size(&page, width, height)
     }
 
@@ -136,7 +141,7 @@ impl<'a> Page<'a> {
     /// Each dilation pass thickens every stroke by ~1 pixel in each direction.
     /// Typically 1 pass is enough for improved legibility at reduced display sizes.
     pub fn render_bold(&self, dilate_passes: u32) -> Result<Pixmap, Error> {
-        let page = self.doc.parsed.page(self.index)?;
+        let page = self.doc.inner.borrow_dependent().page(self.index)?;
         rdjvu_render::render_to_size_bold(
             &page,
             page.info.width as u32,
@@ -152,7 +157,7 @@ impl<'a> Page<'a> {
         height: u32,
         dilate_passes: u32,
     ) -> Result<Pixmap, Error> {
-        let page = self.doc.parsed.page(self.index)?;
+        let page = self.doc.inner.borrow_dependent().page(self.index)?;
         rdjvu_render::render_to_size_bold(&page, width, height, dilate_passes)
     }
 
@@ -163,7 +168,7 @@ impl<'a> Page<'a> {
     /// `boldness` controls how aggressively edges are darkened:
     /// 0.0 = neutral, 0.5 = moderate, 1.0 = strong.
     pub fn render_aa(&self, width: u32, height: u32, boldness: f32) -> Result<Pixmap, Error> {
-        let page = self.doc.parsed.page(self.index)?;
+        let page = self.doc.inner.borrow_dependent().page(self.index)?;
         rdjvu_render::render_aa(&page, width, height, boldness)
     }
 
@@ -171,14 +176,14 @@ impl<'a> Page<'a> {
     ///
     /// Returns `Ok(None)` if no thumbnail exists for this page.
     pub fn thumbnail(&self) -> Result<Option<Pixmap>, Error> {
-        self.doc.parsed.thumbnail(self.index)
+        self.doc.inner.borrow_dependent().thumbnail(self.index)
     }
 
     /// Extract the text layer (TXTz/TXTa) with zone hierarchy.
     ///
     /// Returns `Ok(None)` if the page has no text layer.
     pub fn text_layer(&self) -> Result<Option<TextLayer>, Error> {
-        let page = self.doc.parsed.page(self.index)?;
+        let page = self.doc.inner.borrow_dependent().page(self.index)?;
         page.text_layer()
     }
 
@@ -200,7 +205,7 @@ impl<'a> Page<'a> {
             rdjvu_document::Rotation::Cw90 | rdjvu_document::Rotation::Cw270 => (h, w),
             _ => (w, h),
         };
-        let page = self.doc.parsed.page(self.index)?;
+        let page = self.doc.inner.borrow_dependent().page(self.index)?;
         rdjvu_render::render_to_size(&page, tw, th)
     }
 }
