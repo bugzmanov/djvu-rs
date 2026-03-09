@@ -704,6 +704,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore]
     fn debug_bg_lowres_vs_ddjvu() {
         let cases = [
             ("carte.djvu", 0usize, "/tmp/rdjvu_debug/carte_bg_sub3.ppm"),

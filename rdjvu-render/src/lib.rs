@@ -109,12 +109,12 @@ fn dilate_mask_indexed(mask: Bitmap, blit_map: Vec<i32>, passes: u32) -> (Bitmap
 
 fn composite_bg_only(w: u32, h: u32, bg: &Pixmap, page_w: u32, page_h: u32) -> Pixmap {
     let mapper = PageMapper::new(w, h, page_w, page_h);
-    let bg_samp = BilinearSampler::new(bg, page_w, page_h);
+    let scaled_bg = scale_layer_bilinear(bg, page_w, page_h);
     let mut out = Pixmap::white(w, h);
     for y in 0..h {
         for x in 0..w {
             let (px, py) = mapper.map(x, y);
-            let (r, g, b) = bg_samp.sample(bg, px, py);
+            let (r, g, b) = sample_scaled(&scaled_bg, px, py);
             out.set_rgb(x, y, r, g, b);
         }
     }
@@ -180,7 +180,7 @@ fn composite_mask_bg(
     page_h: u32,
 ) -> Pixmap {
     let mapper = PageMapper::new(w, h, page_w, page_h);
-    let bg_samp = BilinearSampler::new(bg, page_w, page_h);
+    let scaled_bg = scale_layer_bilinear(bg, page_w, page_h);
     let mut out = Pixmap::white(w, h);
     for y in 0..h {
         for x in 0..w {
@@ -188,7 +188,7 @@ fn composite_mask_bg(
             if px < mask.width && py < mask.height && mask.get(px, py) {
                 out.set_rgb(x, y, 0, 0, 0);
             } else {
-                let (r, g, b) = bg_samp.sample(bg, px, py);
+                let (r, g, b) = sample_scaled(&scaled_bg, px, py);
                 out.set_rgb(x, y, r, g, b);
             }
         }
@@ -238,7 +238,7 @@ fn composite_3layer(
 ) -> Pixmap {
     let mapper = PageMapper::new(w, h, page_w, page_h);
     let fg_samp = NearestSampler::new(fg, page_w, page_h);
-    let bg_samp = BilinearSampler::new(bg, page_w, page_h);
+    let scaled_bg = scale_layer_bilinear(bg, page_w, page_h);
     let mut out = Pixmap::white(w, h);
     for y in 0..h {
         for x in 0..w {
@@ -247,7 +247,7 @@ fn composite_3layer(
                 let (r, g, b) = fg_samp.sample(fg, px, py);
                 out.set_rgb(x, y, r, g, b);
             } else {
-                let (r, g, b) = bg_samp.sample(bg, px, py);
+                let (r, g, b) = sample_scaled(&scaled_bg, px, py);
                 out.set_rgb(x, y, r, g, b);
             }
         }
@@ -315,7 +315,7 @@ fn composite_palette(
     page_h: u32,
 ) -> Pixmap {
     let mapper = PageMapper::new(w, h, page_w, page_h);
-    let bg_samp = BilinearSampler::new(bg, page_w, page_h);
+    let scaled_bg = scale_layer_bilinear(bg, page_w, page_h);
     let mut out = Pixmap::white(w, h);
     for y in 0..h {
         for x in 0..w {
@@ -330,7 +330,7 @@ fn composite_palette(
                 };
                 out.set_rgb(x, y, r, g, b);
             } else {
-                let (r, g, b) = bg_samp.sample(bg, mx, my);
+                let (r, g, b) = sample_scaled(&scaled_bg, mx, my);
                 out.set_rgb(x, y, r, g, b);
             }
         }
@@ -442,74 +442,6 @@ impl NearestSampler {
     }
 }
 
-/// Precomputed geometry for bilinear sampling from a layer.
-///
-/// Precomputes all constants that are invariant across pixels, keeping only
-/// 2 f64 multiplies + clamps in the per-pixel hot path.
-struct BilinearSampler {
-    scale_x: f64,   // virt_w / virt_page_w
-    scale_y: f64,   // virt_h / virt_page_h
-    sw_m1: f64,
-    sh_m1: f64,
-    virt_page_w_m1: u32,
-    virt_page_h_m1: u32,
-    clamp_x: u32,   // min(virt_w-1, src_w-1)
-    clamp_y: u32,   // min(virt_h-1, src_h-1)
-    src_w_m1: u32,
-    src_h_m1: u32,
-}
-
-impl BilinearSampler {
-    fn new(src: &Pixmap, page_w: u32, page_h: u32) -> Self {
-        let (_, virt_w, virt_h, virt_page_w, virt_page_h) = layer_virtual_geometry(src, page_w, page_h);
-        let sw = virt_w as f64;
-        let sh = virt_h as f64;
-        BilinearSampler {
-            scale_x: sw / virt_page_w as f64,
-            scale_y: sh / virt_page_h as f64,
-            sw_m1: sw - 1.0,
-            sh_m1: sh - 1.0,
-            virt_page_w_m1: virt_page_w.saturating_sub(1),
-            virt_page_h_m1: virt_page_h.saturating_sub(1),
-            clamp_x: virt_w.saturating_sub(1).min(src.width.saturating_sub(1)),
-            clamp_y: virt_h.saturating_sub(1).min(src.height.saturating_sub(1)),
-            src_w_m1: src.width.saturating_sub(1),
-            src_h_m1: src.height.saturating_sub(1),
-        }
-    }
-
-    #[inline(always)]
-    fn sample(&self, src: &Pixmap, page_x: u32, page_y: u32) -> (u8, u8, u8) {
-        let px = page_x.min(self.virt_page_w_m1);
-        let py = page_y.min(self.virt_page_h_m1);
-        let sx = ((px as f64 + 0.5) * self.scale_x - 0.5).clamp(0.0, self.sw_m1);
-        let sy = ((py as f64 + 0.5) * self.scale_y - 0.5).clamp(0.0, self.sh_m1);
-
-        let sx0 = sx as u32;
-        let sy0 = sy as u32;
-        let sx1 = (sx0 + 1).min(self.clamp_x);
-        let sy1 = (sy0 + 1).min(self.clamp_y);
-        let fx = ((sx - sx0 as f64) * 16.0 + 0.5).floor().clamp(0.0, 15.0) as u32;
-        let fy = ((sy - sy0 as f64) * 16.0 + 0.5).floor().clamp(0.0, 15.0) as u32;
-
-        let (r00, g00, b00) = src.get_rgb(sx0.min(self.src_w_m1), sy0.min(self.src_h_m1));
-        let (r10, g10, b10) = src.get_rgb(sx1, sy0.min(self.src_h_m1));
-        let (r01, g01, b01) = src.get_rgb(sx0.min(self.src_w_m1), sy1);
-        let (r11, g11, b11) = src.get_rgb(sx1, sy1);
-        let interp_h = |v0: u8, v1: u8| -> u32 {
-            ((v0 as u32 * (16 - fx) + v1 as u32 * fx + 8) >> 4).clamp(0, 255)
-        };
-        let interp_v = |v0: u32, v1: u32| -> u8 {
-            ((v0 * (16 - fy) + v1 * fy + 8) >> 4).clamp(0, 255) as u8
-        };
-        (
-            interp_v(interp_h(r00, r10), interp_h(r01, r11)),
-            interp_v(interp_h(g00, g10), interp_h(g01, g11)),
-            interp_v(interp_h(b00, b10), interp_h(b01, b11)),
-        )
-    }
-}
-
 fn layer_virtual_geometry(src: &Pixmap, page_w: u32, page_h: u32) -> (u32, u32, u32, u32, u32) {
     let red_w = (page_w + src.width - 1) / src.width;
     let red_h = (page_h + src.height - 1) / src.height;
@@ -521,16 +453,169 @@ fn layer_virtual_geometry(src: &Pixmap, page_w: u32, page_h: u32) -> (u32, u32, 
     (reduction, virt_w, virt_h, virt_page_w, virt_page_h)
 }
 
-#[cfg(test)]
-fn sample_bilinear_virtual(
-    src: &Pixmap,
-    page_x: u32,
-    page_y: u32,
-    page_w: u32,
-    page_h: u32,
-) -> (u8, u8, u8) {
-    let sampler = BilinearSampler::new(src, page_w, page_h);
-    sampler.sample(src, page_x, page_y)
+// ============================================================
+// Separable bilinear scaler with precomputed LUTs
+// ============================================================
+
+/// 4-bit fractional precision (16 sub-pixel positions), matching DjVuLibre.
+const FRACBITS: u32 = 4;
+const FRACMASK: u32 = (1 << FRACBITS) - 1; // 0xF
+
+/// Precomputed interpolation LUT: INTERP[frac][value_diff + 255] gives the
+/// interpolated delta. This eliminates per-pixel multiplication.
+///
+/// For fraction `f` in 0..16 and pixel difference `d` in -255..255:
+///   INTERP[f][d + 255] = (f * d + 8) >> 4
+static INTERP: [[i16; 511]; 16] = {
+    let mut table = [[0i16; 511]; 16];
+    let mut f = 0usize;
+    while f < 16 {
+        let mut d = 0i32;
+        while d < 511 {
+            let diff = d - 255;
+            table[f][d as usize] = ((f as i32 * diff + 8) >> 4) as i16;
+            d += 1;
+        }
+        f += 1;
+    }
+    table
+};
+
+/// Precompute source coordinates for a scanline, matching BilinearSampler's f64 math.
+/// Returns a Vec of packed u32: upper bits = integer coord, lower FRACBITS = fraction.
+/// Uses center-pixel mapping: src = (dst + 0.5) * src_size / out_size - 0.5
+fn prepare_coord(src_size: u32, out_size: u32) -> Vec<u32> {
+    if out_size == 0 {
+        return Vec::new();
+    }
+    let scale = src_size as f64 / out_size as f64;
+    let max_src = src_size as f64 - 1.0;
+    let mut coords = Vec::with_capacity(out_size as usize);
+    for i in 0..out_size {
+        let s = ((i as f64 + 0.5) * scale - 0.5).clamp(0.0, max_src);
+        let si = s as u32;
+        // Match BilinearSampler's fraction quantization: floor(frac * 16 + 0.5)
+        let frac = ((s - si as f64) * 16.0 + 0.5).floor().clamp(0.0, 15.0) as u32;
+        coords.push((si << FRACBITS) | frac);
+    }
+    coords
+}
+
+/// Pre-scale a source layer to page dimensions using separable bilinear interpolation.
+/// This is much faster than per-pixel bilinear because:
+/// 1. Coordinate computation is done once (not per-pixel)
+/// 2. Interpolation uses LUT (no multiplication)
+/// 3. Horizontal and vertical passes are separated (cache-friendly)
+fn scale_layer_bilinear(src: &Pixmap, page_w: u32, page_h: u32) -> Pixmap {
+    let (_, virt_w, virt_h, virt_page_w, virt_page_h) =
+        layer_virtual_geometry(src, page_w, page_h);
+
+    // Output dimensions in virtual page space
+    let ow = virt_page_w;
+    let oh = virt_page_h;
+    let sw = src.width as usize;
+    let sh = src.height as usize;
+
+    if sw == 0 || sh == 0 || ow == 0 || oh == 0 {
+        return Pixmap::white(ow.max(1), oh.max(1));
+    }
+
+    // Coordinate maps: output → virtual source space (matching BilinearSampler's mapping)
+    let hcoord = prepare_coord(virt_w, ow);
+    let vcoord = prepare_coord(virt_h, oh);
+
+    let sw_m1 = sw - 1;
+    let sh_m1 = sh - 1;
+
+    // Pass 1: horizontal interpolation — produce intermediate buffer (ow × sh) in RGB
+    let ow_us = ow as usize;
+    let mut hbuf: Vec<u8> = vec![0u8; sh * ow_us * 3];
+    for sy in 0..sh {
+        let src_row_off = sy * sw;
+        let dst_row_off = sy * ow_us * 3;
+        for dx in 0..ow_us {
+            let coord = hcoord[dx];
+            let ix = ((coord >> FRACBITS) as usize).min(sw_m1);
+            let fx = (coord & FRACMASK) as usize;
+            let ix1 = (ix + 1).min(sw_m1);
+
+            let s0 = (src_row_off + ix) * 4;
+            let s1 = (src_row_off + ix1) * 4;
+
+            let r0 = src.data[s0] as i16;
+            let g0 = src.data[s0 + 1] as i16;
+            let b0 = src.data[s0 + 2] as i16;
+
+            let d = dst_row_off + dx * 3;
+            if fx == 0 {
+                hbuf[d] = r0 as u8;
+                hbuf[d + 1] = g0 as u8;
+                hbuf[d + 2] = b0 as u8;
+            } else {
+                let r1 = src.data[s1] as i16;
+                let g1 = src.data[s1 + 1] as i16;
+                let b1 = src.data[s1 + 2] as i16;
+                hbuf[d] = (r0 + INTERP[fx][(r1 - r0 + 255) as usize]) as u8;
+                hbuf[d + 1] = (g0 + INTERP[fx][(g1 - g0 + 255) as usize]) as u8;
+                hbuf[d + 2] = (b0 + INTERP[fx][(b1 - b0 + 255) as usize]) as u8;
+            }
+        }
+    }
+
+    // Pass 2: vertical interpolation on hbuf → output (ow × oh)
+    let mut out = Pixmap::white(ow, oh);
+    let hstride = ow_us * 3;
+    for dy in 0..oh as usize {
+        let coord = vcoord[dy];
+        let iy = ((coord >> FRACBITS) as usize).min(sh_m1);
+        let fy = (coord & FRACMASK) as usize;
+        let iy1 = (iy + 1).min(sh_m1);
+
+        let row0_off = iy * hstride;
+        let row1_off = iy1 * hstride;
+        let out_off = dy * ow_us * 4;
+
+        if fy == 0 {
+            for dx in 0..ow_us {
+                let s = row0_off + dx * 3;
+                let d = out_off + dx * 4;
+                out.data[d] = hbuf[s];
+                out.data[d + 1] = hbuf[s + 1];
+                out.data[d + 2] = hbuf[s + 2];
+                out.data[d + 3] = 255;
+            }
+        } else {
+            for dx in 0..ow_us {
+                let s0 = row0_off + dx * 3;
+                let s1 = row1_off + dx * 3;
+                let d = out_off + dx * 4;
+
+                let r0 = hbuf[s0] as i16;
+                let g0 = hbuf[s0 + 1] as i16;
+                let b0 = hbuf[s0 + 2] as i16;
+                let r1 = hbuf[s1] as i16;
+                let g1 = hbuf[s1 + 1] as i16;
+                let b1 = hbuf[s1 + 2] as i16;
+
+                out.data[d] = (r0 + INTERP[fy][(r1 - r0 + 255) as usize]) as u8;
+                out.data[d + 1] = (g0 + INTERP[fy][(g1 - g0 + 255) as usize]) as u8;
+                out.data[d + 2] = (b0 + INTERP[fy][(b1 - b0 + 255) as usize]) as u8;
+                out.data[d + 3] = 255;
+            }
+        }
+    }
+
+    out
+}
+
+/// Sample from a pre-scaled pixmap using page coordinates.
+/// The scaled pixmap covers virt_page_w × virt_page_h; coordinates beyond
+/// its bounds are clamped.
+#[inline(always)]
+fn sample_scaled(scaled: &Pixmap, page_x: u32, page_y: u32) -> (u8, u8, u8) {
+    let sx = page_x.min(scaled.width.saturating_sub(1));
+    let sy = page_y.min(scaled.height.saturating_sub(1));
+    scaled.get_rgb(sx, sy)
 }
 
 #[cfg(test)]
@@ -2552,8 +2637,9 @@ mod tests {
             );
         };
 
+        let scaled_bg = scale_layer_bilinear(&bg, w, h);
         compare("current_float", &|x, y| {
-            sample_bilinear_virtual(&bg, x, y, w, h)
+            sample_scaled(&scaled_bg, x, y)
         });
 
         compare("fixed16_direct", &|x, y| {
@@ -2763,6 +2849,7 @@ mod tests {
         let (reduction, virt_w, virt_h, virt_page_w, virt_page_h) =
             layer_virtual_geometry(&fg, w, h);
 
+        let scaled_bg2 = scale_layer_bilinear(&bg, w, h);
         let compare = |name: &str, x_shift: u32, y_shift: u32| {
             let mut out = Pixmap::white(w, h);
             for y in 0..h {
@@ -2775,7 +2862,7 @@ mod tests {
                         let (r, g, b) = fg.get_rgb(sx, sy);
                         out.set_rgb(x, y, r, g, b);
                     } else {
-                        let (r, g, b) = sample_bilinear_virtual(&bg, x, y, w, h);
+                        let (r, g, b) = sample_scaled(&scaled_bg2, x, y);
                         out.set_rgb(x, y, r, g, b);
                     }
                 }

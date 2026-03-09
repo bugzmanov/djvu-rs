@@ -1329,6 +1329,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore]
     fn debug_carte_bg_color_candidates() {
         let ref_path = std::path::Path::new("/tmp/rdjvu_debug/carte_bg_sub3.ppm");
         if !ref_path.exists() {
@@ -1474,6 +1475,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore]
     fn debug_carte_bg_wavelet_rounding_candidates() {
         let ref_path = std::path::Path::new("/tmp/rdjvu_debug/carte_bg_sub3.ppm");
         if !ref_path.exists() {
@@ -1544,6 +1546,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore]
     fn debug_bg_header_profiles() {
         for file in [
             "carte.djvu",
@@ -1604,6 +1607,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore]
     fn debug_carte_bg_progressive_chunk_mismatch() {
         let data = std::fs::read(assets_path().join("carte.djvu")).unwrap();
         let file = rdjvu_iff::parse(&data).unwrap();
@@ -1649,6 +1653,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore]
     fn debug_carte_bg_progressive_luma_mismatch() {
         let data = std::fs::read(assets_path().join("carte.djvu")).unwrap();
         let file = rdjvu_iff::parse(&data).unwrap();
@@ -1712,6 +1717,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore]
     fn debug_colorbook_bg_luma_mismatch() {
         let ref_path = std::path::Path::new("/tmp/rdjvu_debug/colorbook_bg_ref.ppm");
         if !ref_path.exists() {
@@ -1786,6 +1792,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore]
     fn debug_iw44_numeric_ranges() {
         for file in ["carte.djvu", "colorbook.djvu", "chicken.djvu"] {
             let data = std::fs::read(assets_path().join(file)).unwrap();
@@ -1843,6 +1850,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore]
     fn debug_carte_bg_chunk1_block_profile() {
         let ref_path = std::path::Path::new("/tmp/rdjvu_debug/carte_bg_1_ref.ppm");
         if !ref_path.exists() {
@@ -1912,6 +1920,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore]
     fn debug_carte_bg_delay_candidates() {
         let ref_path = std::path::Path::new("/tmp/rdjvu_debug/carte_bg_4_ref.ppm");
         if !ref_path.exists() {
@@ -1965,6 +1974,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore]
     fn debug_color_delay_preadvance_candidate() {
         let cases = [
             ("carte", "carte.djvu", "/tmp/rdjvu_debug/carte_bg_4_ref.ppm"),
@@ -2022,6 +2032,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore]
     fn debug_context_reset_candidates() {
         let cases = [
             ("carte", "carte.djvu", "/tmp/rdjvu_debug/carte_bg_4_ref.ppm"),
