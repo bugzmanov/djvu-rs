@@ -1,7 +1,7 @@
 # Test Assets Attribution
 
 These DjVu test files are borrowed from the
-[djvu.js](https://github.com/nickmain/nickmain-djvu.js) project.
+[djvu.js](https://github.com/RussCoder/djvujs) project.
 
 The DjVu.js Library is distributed under the
 [GNU General Public License, Version 2](https://www.gnu.org/licenses/old-licenses/gpl-2.0.html).
