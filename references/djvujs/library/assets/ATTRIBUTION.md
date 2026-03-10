@@ -3,8 +3,9 @@
 These DjVu test files are borrowed from the
 [djvu.js](https://github.com/RussCoder/djvujs) project.
 
-The DjVu.js Library is distributed under the
-[GNU General Public License, Version 2](https://www.gnu.org/licenses/old-licenses/gpl-2.0.html).
+These test assets fall under [The Unlicense](https://unlicense.org/) as per the
+djvu.js license terms (the GPL v2 applies only to library source code in
+`library/src`, everything else is Unlicense).
 
 ```
 DjVuLibre-3.5
