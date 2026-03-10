@@ -1,4 +1,4 @@
-use rdjvu_core::Error;
+use crate::error::Error;
 
 /// A 4-byte chunk identifier (e.g., b"FORM", b"INFO", b"Sjbz").
 pub type ChunkId = [u8; 4];
@@ -208,15 +208,11 @@ mod tests {
 
     fn assets_path() -> std::path::PathBuf {
         std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .parent()
-            .unwrap()
             .join("references/djvujs/library/assets")
     }
 
     fn golden_path() -> std::path::PathBuf {
         std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .parent()
-            .unwrap()
             .join("tests/golden/iff")
     }
 

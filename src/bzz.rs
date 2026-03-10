@@ -1,4 +1,4 @@
-use rdjvu_zp::ZPDecoder;
+use crate::zp::ZPDecoder;
 
 /// Errors that can occur during BZZ decoding.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -267,8 +267,6 @@ mod tests {
 
     fn golden_path() -> std::path::PathBuf {
         std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .parent()
-            .unwrap()
             .join("tests/golden/bzz")
     }
 

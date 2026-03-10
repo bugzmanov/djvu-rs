@@ -1,5 +1,5 @@
-use rdjvu_core::Bitmap;
-use rdjvu_zp::ZPDecoder;
+use crate::bitmap::Bitmap;
+use crate::zp::ZPDecoder;
 
 /// Errors that can occur during JB2 decoding.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -868,20 +868,16 @@ mod tests {
 
     fn assets_path() -> std::path::PathBuf {
         std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .parent()
-            .unwrap()
             .join("references/djvujs/library/assets")
     }
 
     fn golden_path() -> std::path::PathBuf {
         std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .parent()
-            .unwrap()
             .join("tests/golden/jb2")
     }
 
     fn extract_sjbz(djvu_data: &[u8]) -> &[u8] {
-        let file = rdjvu_iff::parse(djvu_data).unwrap();
+        let file = crate::iff::parse(djvu_data).unwrap();
         let sjbz = file.root.find_first(b"Sjbz").unwrap();
         sjbz.data()
     }
@@ -904,9 +900,9 @@ mod tests {
     }
 
     fn extract_first_page_sjbz(djvu_data: &[u8]) -> Vec<u8> {
-        let file = rdjvu_iff::parse(djvu_data).unwrap();
+        let file = crate::iff::parse(djvu_data).unwrap();
         let page_form = file.root.children().iter().find(|c| {
-            matches!(c, rdjvu_iff::Chunk::Form { secondary_id, .. } if secondary_id == b"DJVU")
+            matches!(c, crate::iff::Chunk::Form { secondary_id, .. } if secondary_id == b"DJVU")
         }).expect("no DJVU form found");
         page_form.find_first(b"Sjbz").unwrap().data().to_vec()
     }
@@ -923,10 +919,10 @@ mod tests {
     }
 
     /// Find the Nth DJVU page form (0-indexed) in a bundled DJVM.
-    fn find_page_form<'a>(file: &'a rdjvu_iff::DjvuFile<'a>, page: usize) -> &'a rdjvu_iff::Chunk<'a> {
+    fn find_page_form<'a>(file: &'a crate::iff::DjvuFile<'a>, page: usize) -> &'a crate::iff::Chunk<'a> {
         let mut idx = 0;
         for chunk in file.root.children() {
-            if matches!(chunk, rdjvu_iff::Chunk::Form { secondary_id, .. } if secondary_id == b"DJVU") {
+            if matches!(chunk, crate::iff::Chunk::Form { secondary_id, .. } if secondary_id == b"DJVU") {
                 if idx == page {
                     return chunk;
                 }
@@ -937,9 +933,9 @@ mod tests {
     }
 
     /// Find a DJVI form by its component name (from INCL chunk).
-    fn find_djvi_djbz<'a>(file: &'a rdjvu_iff::DjvuFile<'a>, name: &[u8]) -> &'a [u8] {
+    fn find_djvi_djbz<'a>(file: &'a crate::iff::DjvuFile<'a>, name: &[u8]) -> &'a [u8] {
         for chunk in file.root.children() {
-            if let rdjvu_iff::Chunk::Form { secondary_id, .. } = chunk {
+            if let crate::iff::Chunk::Form { secondary_id, .. } = chunk {
                 if secondary_id == b"DJVI" {
                     // Check if this DJVI's component name matches
                     // The component name is in the DIRM, but we can match by trying to find the Djbz
@@ -956,7 +952,7 @@ mod tests {
     fn jb2_decode_djvu3spec_p1_mask() {
         // Page 1 has inline Djbz + Sjbz
         let djvu = std::fs::read(assets_path().join("DjVu3Spec_bundled.djvu")).unwrap();
-        let file = rdjvu_iff::parse(&djvu).unwrap();
+        let file = crate::iff::parse(&djvu).unwrap();
         let page_form = find_page_form(&file, 0);
         let djbz_data = page_form.find_first(b"Djbz").unwrap().data();
         let sjbz_data = page_form.find_first(b"Sjbz").unwrap().data();
@@ -973,7 +969,7 @@ mod tests {
     fn jb2_decode_djvu3spec_p2_mask() {
         // Page 2 uses INCL to reference dict0020.iff (a DJVI component)
         let djvu = std::fs::read(assets_path().join("DjVu3Spec_bundled.djvu")).unwrap();
-        let file = rdjvu_iff::parse(&djvu).unwrap();
+        let file = crate::iff::parse(&djvu).unwrap();
 
         // Get shared dict from the DJVI component
         let djbz_data = find_djvi_djbz(&file, b"dict0020.iff");
@@ -994,7 +990,7 @@ mod tests {
     fn jb2_decode_navm_fgbz_p1_mask() {
         // All pages use INCL to reference dict0006.iff
         let djvu = std::fs::read(assets_path().join("navm_fgbz.djvu")).unwrap();
-        let file = rdjvu_iff::parse(&djvu).unwrap();
+        let file = crate::iff::parse(&djvu).unwrap();
 
         let djbz_data = find_djvi_djbz(&file, b"dict0006.iff");
         let shared_dict = decode_dict(djbz_data, None).unwrap();
@@ -1041,7 +1037,6 @@ mod tests {
         // Crash artifact from fuzzing — must not panic
         let data = std::fs::read(
             std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-                .parent().unwrap()
                 .join("fuzz/artifacts/fuzz_jb2/crash-300468aea78aa31479c595355e2e315798de347a")
         ).unwrap();
         let _ = decode(&data, None);

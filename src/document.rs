@@ -1,9 +1,11 @@
-use rdjvu_core::{Bitmap, Error, Pixmap};
-use rdjvu_iff::{self, Chunk, DjvuFile};
-use rdjvu_iw44::IW44Image;
-use rdjvu_jb2::JB2Dict;
+use crate::bitmap::Bitmap;
+use crate::error::Error;
+use crate::pixmap::Pixmap;
+use crate::iff::{self, Chunk, DjvuFile};
+use crate::iw44::IW44Image;
+use crate::jb2::JB2Dict;
 
-pub use rdjvu_iw44::NormalizedPlanes;
+pub use crate::iw44::NormalizedPlanes;
 
 /// A bookmark entry from the NAVM chunk (table of contents).
 #[derive(Debug, Clone)]
@@ -120,7 +122,7 @@ pub struct Document<'a> {
 impl<'a> Document<'a> {
     /// Parse a DjVu document from raw bytes.
     pub fn parse(data: &'a [u8]) -> Result<Self, Error> {
-        let file = rdjvu_iff::parse(data)?;
+        let file = crate::iff::parse(data)?;
         match &file.root {
             Chunk::Form { secondary_id, .. } if secondary_id == b"DJVU" => {
                 Ok(Document {
@@ -199,7 +201,7 @@ impl<'a> Document<'a> {
             None => return Ok(vec![]),
         };
 
-        let decoded = rdjvu_bzz::decode(navm_data)
+        let decoded = crate::bzz::decode(navm_data)
             .map_err(|e| Error::FormatError(format!("NAVM BZZ decode: {}", e)))?;
 
         if decoded.len() < 2 {
@@ -326,7 +328,7 @@ impl<'a> Page<'a> {
 
         let shared_dict = self.resolve_shared_dict()?;
 
-        let bitmap = rdjvu_jb2::decode(sjbz, shared_dict.as_ref())
+        let bitmap = crate::jb2::decode(sjbz, shared_dict.as_ref())
             .map_err(|e| Error::FormatError(e.to_string()))?;
         Ok(Some(bitmap))
     }
@@ -340,7 +342,7 @@ impl<'a> Page<'a> {
 
         let shared_dict = self.resolve_shared_dict()?;
 
-        let result = rdjvu_jb2::decode_indexed(sjbz, shared_dict.as_ref())
+        let result = crate::jb2::decode_indexed(sjbz, shared_dict.as_ref())
             .map_err(|e| Error::FormatError(e.to_string()))?;
         Ok(Some(result))
     }
@@ -397,7 +399,7 @@ impl<'a> Page<'a> {
             if compressed.is_empty() {
                 return Ok(None);
             }
-            rdjvu_bzz::decode(compressed)
+            crate::bzz::decode(compressed)
                 .map_err(|e| Error::FormatError(format!("TXTz BZZ decode: {}", e)))?
         } else if let Some(txta) = self.form.find_first(b"TXTa") {
             txta.data().to_vec()
@@ -418,7 +420,7 @@ impl<'a> Page<'a> {
 
             let shared_form = self.doc.resolve_incl(ref_id)?;
             if let Some(djbz) = shared_form.find_first(b"Djbz") {
-                let dict = rdjvu_jb2::decode_dict(djbz.data(), None)
+                let dict = crate::jb2::decode_dict(djbz.data(), None)
                     .map_err(|e| Error::FormatError(e.to_string()))?;
                 return Ok(Some(dict));
             }
@@ -426,7 +428,7 @@ impl<'a> Page<'a> {
 
         // Then check for inline Djbz in the same FORM as Sjbz
         if let Some(djbz) = self.form.find_first(b"Djbz") {
-            let dict = rdjvu_jb2::decode_dict(djbz.data(), None)
+            let dict = crate::jb2::decode_dict(djbz.data(), None)
                 .map_err(|e| Error::FormatError(e.to_string()))?;
             return Ok(Some(dict));
         }
@@ -523,7 +525,7 @@ fn parse_dirm(data: &[u8]) -> Result<(Vec<DirmEntry>, bool), Error> {
 
     // Remaining bytes are BZZ-compressed metadata
     let bzz_data = &data[pos..];
-    let meta = rdjvu_bzz::decode(bzz_data)
+    let meta = crate::bzz::decode(bzz_data)
         .map_err(|e| Error::FormatError(e.to_string()))?;
 
     // Parse metadata: for each component, read size(3), flags(1), id(strNT), name?(strNT), title?(strNT)
@@ -618,7 +620,7 @@ fn parse_fgbz(data: &[u8]) -> Result<Palette, Error> {
             | (data[idx_start + 2] as u32);
 
         let bzz_data = &data[idx_start + 3..];
-        let decoded = rdjvu_bzz::decode(bzz_data)
+        let decoded = crate::bzz::decode(bzz_data)
             .map_err(|e| Error::FormatError(e.to_string()))?;
 
         // Each index is i16be
@@ -849,15 +851,11 @@ mod tests {
 
     fn assets_path() -> std::path::PathBuf {
         std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .parent()
-            .unwrap()
             .join("references/djvujs/library/assets")
     }
 
     fn golden_path() -> std::path::PathBuf {
         std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .parent()
-            .unwrap()
             .join("tests/golden/document")
     }
 
@@ -944,9 +942,9 @@ mod tests {
         let mask_via_doc = doc.page(0).unwrap().decode_mask().unwrap().unwrap();
 
         // Via direct JB2 decode
-        let file = rdjvu_iff::parse(&data).unwrap();
+        let file = crate::iff::parse(&data).unwrap();
         let sjbz = file.root.find_first(b"Sjbz").unwrap();
-        let mask_direct = rdjvu_jb2::decode(sjbz.data(), None).unwrap();
+        let mask_direct = crate::jb2::decode(sjbz.data(), None).unwrap();
 
         assert_eq!(mask_via_doc.data, mask_direct.data, "mask data mismatch");
     }
@@ -1145,8 +1143,6 @@ mod tests {
 
     fn text_golden_path() -> std::path::PathBuf {
         std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .parent()
-            .unwrap()
             .join("tests/golden/text")
     }
 

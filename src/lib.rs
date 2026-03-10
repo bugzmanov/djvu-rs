@@ -15,12 +15,25 @@
 
 #![forbid(unsafe_code)]
 
-pub use rdjvu_core::{Bitmap, Error, Pixmap};
-pub use rdjvu_document::{Bookmark, Rotation, TextLayer, TextZone, TextZoneKind};
+mod zp;
+mod bzz;
+pub(crate) mod iff;
+mod jb2;
+mod iw44;
+pub(crate) mod document;
+pub(crate) mod render;
+pub(crate) mod error;
+pub(crate) mod bitmap;
+pub(crate) mod pixmap;
+
+pub use error::Error;
+pub use bitmap::Bitmap;
+pub use pixmap::Pixmap;
+pub use document::{Bookmark, Rotation, TextLayer, TextZone, TextZoneKind};
 
 use self_cell::self_cell;
 
-type ParsedDocument<'a> = rdjvu_document::Document<'a>;
+type ParsedDocument<'a> = document::Document<'a>;
 
 self_cell!(
     struct DocumentInner {
@@ -59,7 +72,7 @@ impl Document {
     /// Parse a DjVu document from owned bytes.
     pub fn from_bytes(data: Vec<u8>) -> Result<Self, Error> {
         let inner = DocumentInner::try_new(data.into_boxed_slice(), |bytes| {
-            rdjvu_document::Document::parse(bytes)
+            document::Document::parse(bytes)
         })?;
         Ok(Document { inner })
     }
@@ -93,7 +106,7 @@ pub struct Page<'a> {
     width: u16,
     height: u16,
     dpi: u16,
-    rotation: rdjvu_document::Rotation,
+    rotation: document::Rotation,
     index: usize,
     doc: &'a Document,
 }
@@ -112,7 +125,7 @@ impl<'a> Page<'a> {
     /// Effective page width after rotation.
     pub fn display_width(&self) -> u32 {
         match self.rotation {
-            rdjvu_document::Rotation::Cw90 | rdjvu_document::Rotation::Cw270 => self.height as u32,
+            document::Rotation::Cw90 | document::Rotation::Cw270 => self.height as u32,
             _ => self.width as u32,
         }
     }
@@ -120,7 +133,7 @@ impl<'a> Page<'a> {
     /// Effective page height after rotation.
     pub fn display_height(&self) -> u32 {
         match self.rotation {
-            rdjvu_document::Rotation::Cw90 | rdjvu_document::Rotation::Cw270 => self.width as u32,
+            document::Rotation::Cw90 | document::Rotation::Cw270 => self.width as u32,
             _ => self.height as u32,
         }
     }
@@ -143,16 +156,16 @@ impl<'a> Page<'a> {
     /// Render the page to an RGBA pixmap at native resolution.
     pub fn render(&self) -> Result<Pixmap, Error> {
         let page = self.doc.inner.borrow_dependent().page(self.index)?;
-        rdjvu_render::render(&page)
+        render::render(&page)
     }
 
     /// Render the page to an RGBA pixmap at a target size.
     ///
-    /// Layers are composited directly at the target resolution —
+    /// Layers are composited directly at the target resolution --
     /// no intermediate full-size buffer is allocated.
     pub fn render_to_size(&self, width: u32, height: u32) -> Result<Pixmap, Error> {
         let page = self.doc.inner.borrow_dependent().page(self.index)?;
-        rdjvu_render::render_to_size(&page, width, height)
+        render::render_to_size(&page, width, height)
     }
 
     /// Render the page at native resolution with mask dilation for bolder text.
@@ -161,7 +174,7 @@ impl<'a> Page<'a> {
     /// Typically 1 pass is enough for improved legibility at reduced display sizes.
     pub fn render_bold(&self, dilate_passes: u32) -> Result<Pixmap, Error> {
         let page = self.doc.inner.borrow_dependent().page(self.index)?;
-        rdjvu_render::render_to_size_bold(
+        render::render_to_size_bold(
             &page,
             page.info.width as u32,
             page.info.height as u32,
@@ -177,7 +190,7 @@ impl<'a> Page<'a> {
         dilate_passes: u32,
     ) -> Result<Pixmap, Error> {
         let page = self.doc.inner.borrow_dependent().page(self.index)?;
-        rdjvu_render::render_to_size_bold(&page, width, height, dilate_passes)
+        render::render_to_size_bold(&page, width, height, dilate_passes)
     }
 
     /// Render the page at a target size with anti-aliased downscaling.
@@ -188,7 +201,7 @@ impl<'a> Page<'a> {
     /// 0.0 = neutral, 0.5 = moderate, 1.0 = strong.
     pub fn render_aa(&self, width: u32, height: u32, boldness: f32) -> Result<Pixmap, Error> {
         let page = self.doc.inner.borrow_dependent().page(self.index)?;
-        rdjvu_render::render_aa(&page, width, height, boldness)
+        render::render_aa(&page, width, height, boldness)
     }
 
     /// Decode the page thumbnail, if available.
@@ -221,11 +234,11 @@ impl<'a> Page<'a> {
         let h = ((dh as f32 * scale).round() as u32).max(1);
         // render_to_size works in pre-rotation coords
         let (tw, th) = match self.rotation {
-            rdjvu_document::Rotation::Cw90 | rdjvu_document::Rotation::Cw270 => (h, w),
+            document::Rotation::Cw90 | document::Rotation::Cw270 => (h, w),
             _ => (w, h),
         };
         let page = self.doc.inner.borrow_dependent().page(self.index)?;
-        rdjvu_render::render_to_size(&page, tw, th)
+        render::render_to_size(&page, tw, th)
     }
 }
 
@@ -246,15 +259,11 @@ mod tests {
 
     fn assets_path() -> std::path::PathBuf {
         std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .parent()
-            .unwrap()
             .join("references/djvujs/library/assets")
     }
 
     fn golden_path() -> std::path::PathBuf {
         std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .parent()
-            .unwrap()
             .join("tests/golden/composite")
     }
 
@@ -345,7 +354,7 @@ mod tests {
         let page = doc.page(0).unwrap();
         let w = page.width();
         let h = page.height();
-        // Rotated 90° swaps dimensions
+        // Rotated 90 degrees swaps dimensions
         assert_eq!(page.display_width(), h);
         assert_eq!(page.display_height(), w);
     }
@@ -354,7 +363,7 @@ mod tests {
     fn render_boy_jb2_rotate180() {
         let doc = Document::open(assets_path().join("boy_jb2_rotate180.djvu")).unwrap();
         let page = doc.page(0).unwrap();
-        // 180° keeps dimensions the same
+        // 180 degrees keeps dimensions the same
         assert_eq!(page.display_width(), page.width());
         assert_eq!(page.display_height(), page.height());
         let pm = page.render().unwrap();
@@ -365,7 +374,7 @@ mod tests {
     fn render_boy_jb2_rotate270() {
         let doc = Document::open(assets_path().join("boy_jb2_rotate270.djvu")).unwrap();
         let page = doc.page(0).unwrap();
-        // 270° swaps dimensions like 90°
+        // 270 degrees swaps dimensions like 90 degrees
         assert_eq!(page.display_width(), page.height());
         assert_eq!(page.display_height(), page.width());
         let pm = page.render().unwrap();
@@ -501,7 +510,7 @@ mod tests {
     fn render_slow_large_document() {
         let doc = Document::open(assets_path().join("slow.djvu")).unwrap();
         assert!(doc.page_count() >= 1);
-        // Just render first page — this is a perf stress test
+        // Just render first page -- this is a perf stress test
         let page = doc.page(0).unwrap();
         let pm = page.render().unwrap();
         assert!(pm.width > 0 && pm.height > 0);

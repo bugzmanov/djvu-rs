@@ -1,5 +1,7 @@
-use rdjvu_core::{Bitmap, Error, Pixmap};
-use rdjvu_document::{Page, Palette, Rotation};
+use crate::bitmap::Bitmap;
+use crate::error::Error;
+use crate::pixmap::Pixmap;
+use crate::document::{Page, Palette, Rotation};
 
 /// Render a DjVu page to an RGBA pixmap at native resolution.
 pub fn render(page: &Page) -> Result<Pixmap, Error> {
@@ -816,7 +818,7 @@ fn rotate_cw270(src: &Pixmap) -> Pixmap {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use rdjvu_document::Document;
+    use crate::document::Document;
 
     #[derive(Clone, Copy)]
     struct DiffStats {
@@ -833,15 +835,11 @@ mod tests {
 
     fn assets_path() -> std::path::PathBuf {
         std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .parent()
-            .unwrap()
             .join("references/djvujs/library/assets")
     }
 
     fn golden_path() -> std::path::PathBuf {
         std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .parent()
-            .unwrap()
             .join("tests/golden/composite")
     }
 

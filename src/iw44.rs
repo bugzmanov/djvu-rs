@@ -1,5 +1,5 @@
-use rdjvu_core::Pixmap;
-use rdjvu_zp::ZPDecoder;
+use crate::pixmap::Pixmap;
+use crate::zp::ZPDecoder;
 
 /// Errors that can occur during IW44 decoding.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -922,22 +922,18 @@ mod tests {
 
     fn assets_path() -> std::path::PathBuf {
         std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .parent()
-            .unwrap()
             .join("references/djvujs/library/assets")
     }
 
     fn golden_path() -> std::path::PathBuf {
         std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .parent()
-            .unwrap()
             .join("tests/golden/iw44")
     }
 
-    fn extract_bg44_chunks<'a>(file: &'a rdjvu_iff::DjvuFile<'a>) -> Vec<&'a [u8]> {
-        fn collect_from_djvu_form<'a>(chunk: &'a rdjvu_iff::Chunk<'a>) -> Option<Vec<&'a [u8]>> {
+    fn extract_bg44_chunks<'a>(file: &'a crate::iff::DjvuFile<'a>) -> Vec<&'a [u8]> {
+        fn collect_from_djvu_form<'a>(chunk: &'a crate::iff::Chunk<'a>) -> Option<Vec<&'a [u8]>> {
             match chunk {
-                rdjvu_iff::Chunk::Form {
+                crate::iff::Chunk::Form {
                     secondary_id,
                     children,
                     ..
@@ -946,7 +942,7 @@ mod tests {
                         let v = children
                             .iter()
                             .filter_map(|c| match c {
-                                rdjvu_iff::Chunk::Leaf { id, data } if id == b"BG44" => Some(*data),
+                                crate::iff::Chunk::Leaf { id, data } if id == b"BG44" => Some(*data),
                                 _ => None,
                             })
                             .collect::<Vec<_>>();
@@ -1395,7 +1391,7 @@ mod tests {
     #[test]
     fn iw44_decode_boy_bg() {
         let data = std::fs::read(assets_path().join("boy.djvu")).unwrap();
-        let file = rdjvu_iff::parse(&data).unwrap();
+        let file = crate::iff::parse(&data).unwrap();
         let chunks = extract_bg44_chunks(&file);
         assert_eq!(chunks.len(), 1);
 
@@ -1413,7 +1409,7 @@ mod tests {
     #[test]
     fn iw44_decode_big_scanned_sub4() {
         let data = std::fs::read(assets_path().join("big-scanned-page.djvu")).unwrap();
-        let file = rdjvu_iff::parse(&data).unwrap();
+        let file = crate::iff::parse(&data).unwrap();
         let chunks = extract_bg44_chunks(&file);
         assert_eq!(chunks.len(), 4);
 
@@ -1431,7 +1427,7 @@ mod tests {
     #[test]
     fn iw44_decode_chicken_bg() {
         let data = std::fs::read(assets_path().join("chicken.djvu")).unwrap();
-        let file = rdjvu_iff::parse(&data).unwrap();
+        let file = crate::iff::parse(&data).unwrap();
         let chunks = extract_bg44_chunks(&file);
         assert_eq!(chunks.len(), 3);
 
@@ -1455,7 +1451,7 @@ mod tests {
         }
 
         let data = std::fs::read(assets_path().join("carte.djvu")).unwrap();
-        let file = rdjvu_iff::parse(&data).unwrap();
+        let file = crate::iff::parse(&data).unwrap();
         let chunks = extract_bg44_chunks(&file);
         let mut img = IW44Image::new();
         for c in &chunks {
@@ -1601,7 +1597,7 @@ mod tests {
         }
 
         let data = std::fs::read(assets_path().join("carte.djvu")).unwrap();
-        let file = rdjvu_iff::parse(&data).unwrap();
+        let file = crate::iff::parse(&data).unwrap();
         let chunks = extract_bg44_chunks(&file);
         let mut img = IW44Image::new();
         for c in &chunks {
@@ -1673,7 +1669,7 @@ mod tests {
             "chicken.djvu",
         ] {
             let data = std::fs::read(assets_path().join(file)).unwrap();
-            let parsed = rdjvu_iff::parse(&data).unwrap();
+            let parsed = crate::iff::parse(&data).unwrap();
             let chunks = extract_bg44_chunks(&parsed);
             if chunks.is_empty() {
                 continue;
@@ -1713,7 +1709,7 @@ mod tests {
             ("navm_fgbz.djvu", false),
         ] {
             let data = std::fs::read(assets_path().join(file)).unwrap();
-            let parsed = rdjvu_iff::parse(&data).unwrap();
+            let parsed = crate::iff::parse(&data).unwrap();
             let chunks = extract_bg44_chunks(&parsed);
             if chunks.is_empty() {
                 continue;
@@ -1728,7 +1724,7 @@ mod tests {
     #[ignore]
     fn debug_carte_bg_progressive_chunk_mismatch() {
         let data = std::fs::read(assets_path().join("carte.djvu")).unwrap();
-        let file = rdjvu_iff::parse(&data).unwrap();
+        let file = crate::iff::parse(&data).unwrap();
         let chunks = extract_bg44_chunks(&file);
 
         for nchunks in 1..=chunks.len() {
@@ -1774,7 +1770,7 @@ mod tests {
     #[ignore]
     fn debug_carte_bg_progressive_luma_mismatch() {
         let data = std::fs::read(assets_path().join("carte.djvu")).unwrap();
-        let file = rdjvu_iff::parse(&data).unwrap();
+        let file = crate::iff::parse(&data).unwrap();
         let chunks = extract_bg44_chunks(&file);
 
         for nchunks in 1..=chunks.len() {
@@ -1843,7 +1839,7 @@ mod tests {
         }
 
         let data = std::fs::read(assets_path().join("colorbook.djvu")).unwrap();
-        let file = rdjvu_iff::parse(&data).unwrap();
+        let file = crate::iff::parse(&data).unwrap();
         let chunks = extract_bg44_chunks(&file);
         let mut img = IW44Image::new();
         for chunk in &chunks {
@@ -1914,7 +1910,7 @@ mod tests {
     fn debug_iw44_numeric_ranges() {
         for file in ["carte.djvu", "colorbook.djvu", "chicken.djvu"] {
             let data = std::fs::read(assets_path().join(file)).unwrap();
-            let parsed = rdjvu_iff::parse(&data).unwrap();
+            let parsed = crate::iff::parse(&data).unwrap();
             let chunks = extract_bg44_chunks(&parsed);
             if chunks.is_empty() {
                 continue;
@@ -1976,7 +1972,7 @@ mod tests {
         }
 
         let data = std::fs::read(assets_path().join("carte.djvu")).unwrap();
-        let file = rdjvu_iff::parse(&data).unwrap();
+        let file = crate::iff::parse(&data).unwrap();
         let chunks = extract_bg44_chunks(&file);
         let mut img = IW44Image::new();
         img.decode_chunk(chunks[0]).unwrap();
@@ -2046,7 +2042,7 @@ mod tests {
         }
 
         let data = std::fs::read(assets_path().join("carte.djvu")).unwrap();
-        let file = rdjvu_iff::parse(&data).unwrap();
+        let file = crate::iff::parse(&data).unwrap();
         let chunks = extract_bg44_chunks(&file);
         let expected = std::fs::read(ref_path).unwrap();
 
@@ -2106,7 +2102,7 @@ mod tests {
 
         for (tag, file_name, ref_path) in cases {
             let data = std::fs::read(assets_path().join(file_name)).unwrap();
-            let parsed = rdjvu_iff::parse(&data).unwrap();
+            let parsed = crate::iff::parse(&data).unwrap();
             let chunks = extract_bg44_chunks(&parsed);
             if chunks.is_empty() {
                 continue;
@@ -2170,7 +2166,7 @@ mod tests {
 
         for (tag, file_name, ref_path) in cases {
             let data = std::fs::read(assets_path().join(file_name)).unwrap();
-            let parsed = rdjvu_iff::parse(&data).unwrap();
+            let parsed = crate::iff::parse(&data).unwrap();
             let chunks = extract_bg44_chunks(&parsed);
             if chunks.is_empty() {
                 continue;
@@ -2261,7 +2257,6 @@ mod tests {
     fn iw44_fuzz_crash_regression() {
         let data = std::fs::read(
             std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-                .parent().unwrap()
                 .join("fuzz/artifacts/fuzz_iw44/crash-cd05b0f41ddae1e44952cccf5e2b2ae825908e5e")
         ).unwrap();
         let mut img = IW44Image::new();
