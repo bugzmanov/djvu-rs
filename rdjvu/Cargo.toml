@@ -1,5 +1,5 @@
 [package]
-name = "rdjvu"
+name = "djvu"
 version = "0.1.0"
 edition = "2021"
 authors = ["Rafael Bagmanov <bugzmanov@gmail.com>"]

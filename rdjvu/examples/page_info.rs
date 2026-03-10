@@ -6,7 +6,7 @@ fn main() {
     let args: Vec<String> = std::env::args().collect();
     let path = args.get(1).expect("Usage: page_info <file.djvu>");
 
-    let doc = rdjvu::Document::open(path).unwrap();
+    let doc = djvu::Document::open(path).unwrap();
     println!("{} pages", doc.page_count());
 
     for i in 0..doc.page_count() {

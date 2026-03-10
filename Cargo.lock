@@ -167,6 +167,18 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "460fbee9c2c2f33933d720630a6a0bac33ba7053db5344fac858d4b8952d77d5"
 
 [[package]]
+name = "djvu"
+version = "0.1.0"
+dependencies = [
+ "criterion",
+ "rdjvu-core",
+ "rdjvu-document",
+ "rdjvu-iff",
+ "rdjvu-render",
+ "self_cell",
+]
+
+[[package]]
 name = "either"
 version = "1.15.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -322,18 +334,6 @@ checksum = "22e18b0f0062d30d4230b2e85ff77fdfe4326feb054b9783a3460d8435c8ab91"
 dependencies = [
  "crossbeam-deque",
  "crossbeam-utils",
-]
-
-[[package]]
-name = "rdjvu"
-version = "0.1.0"
-dependencies = [
- "criterion",
- "rdjvu-core",
- "rdjvu-document",
- "rdjvu-iff",
- "rdjvu-render",
- "self_cell",
 ]
 
 [[package]]

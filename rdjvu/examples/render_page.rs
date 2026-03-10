@@ -8,7 +8,7 @@ fn main() {
     let page_idx: usize = args.get(2).map(|s| s.parse().unwrap()).unwrap_or(0);
     let output = args.get(3).map(|s| s.as_str()).unwrap_or("/tmp/page.ppm");
 
-    let doc = rdjvu::Document::open(path).unwrap();
+    let doc = djvu::Document::open(path).unwrap();
     let page = doc.page(page_idx).unwrap();
 
     eprintln!(

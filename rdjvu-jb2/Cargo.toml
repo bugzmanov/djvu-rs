@@ -2,7 +2,8 @@
 name = "rdjvu-jb2"
 version = "0.1.0"
 edition = "2021"
-license = "MIT"
+license = "GPL-3.0-or-later"
+publish = false
 description = "JB2 bilevel image decoder for DjVu"
 
 [dependencies]

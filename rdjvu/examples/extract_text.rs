@@ -6,7 +6,7 @@ fn main() {
     let args: Vec<String> = std::env::args().collect();
     let path = args.get(1).expect("Usage: extract_text <file.djvu>");
 
-    let doc = rdjvu::Document::open(path).unwrap();
+    let doc = djvu::Document::open(path).unwrap();
 
     for i in 0..doc.page_count() {
         let page = doc.page(i).unwrap();

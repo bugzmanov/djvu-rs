@@ -9,7 +9,7 @@ fn main() {
     let page_idx: usize = args.get(2).map(|s| s.parse().unwrap()).unwrap_or(0);
     let boldness: f32 = args.get(3).map(|s| s.parse().unwrap()).unwrap_or(0.7);
 
-    let doc = rdjvu::Document::open(djvu_path).unwrap();
+    let doc = djvu::Document::open(djvu_path).unwrap();
     let page = doc.page(page_idx).unwrap();
 
     let native_w = page.display_width();
@@ -36,7 +36,7 @@ fn main() {
     eprintln!("Wrote /tmp/djvu_after.ppm (AA with boldness {})", boldness);
 }
 
-fn point_downsample(src: &rdjvu::Pixmap, tw: u32, th: u32) -> Vec<u8> {
+fn point_downsample(src: &djvu::Pixmap, tw: u32, th: u32) -> Vec<u8> {
     let mut rgb = Vec::with_capacity((tw * th * 3) as usize);
     for y in 0..th {
         for x in 0..tw {

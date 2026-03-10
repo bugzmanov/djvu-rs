@@ -3,7 +3,7 @@
 //! # Example
 //!
 //! ```no_run
-//! let doc = rdjvu::Document::open("file.djvu").unwrap();
+//! let doc = djvu::Document::open("file.djvu").unwrap();
 //! println!("{} pages", doc.page_count());
 //!
 //! let page = doc.page(0).unwrap();
