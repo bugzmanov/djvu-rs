@@ -5,11 +5,14 @@ Pure Rust library for parsing and rendering [DjVu](https://en.wikipedia.org/wiki
 ## Disclaimer
 
 This is an AI-assisted project. The implementation is semi-clean room: format
-specs were derived from the public DjVu3 specification, and behavioral reference
-was taken from [djvu.js](https://github.com/RussCoder/djvujs) (a GPL
-JavaScript DjVu renderer). Test DjVu files are borrowed from djvu.js, and
-golden test outputs are generated using [DjVuLibre](http://djvu.sourceforge.net/)
-command-line tools (`ddjvu`, `djvused`, `djvudump`).
+specs were derived from the public DjVu3 specification, but DjVu has many quirks
+and underspecified details that the spec alone doesn't cover. In order to produce
+readable rendering output, algorithm details were studied from
+[djvu.js](https://github.com/RussCoder/djvujs) (GPL JavaScript renderer) and
+[DjVuLibre](http://djvu.sourceforge.net/) (GPL C++ reference implementation).
+No code was copied from either project. Test DjVu files are borrowed from
+djvu.js, and golden test outputs are generated using DjVuLibre command-line
+tools (`ddjvu`, `djvused`, `djvudump`).
 
 For all intents and purposes this should be considered AI slop. That said, some
 effort has been put into making the library performant and stable. It is used as
