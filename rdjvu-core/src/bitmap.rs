@@ -11,6 +11,12 @@ pub struct Bitmap {
     pub data: Vec<u8>,
 }
 
+impl Default for Bitmap {
+    fn default() -> Self {
+        Bitmap { width: 0, height: 0, data: Vec::new() }
+    }
+}
+
 impl Bitmap {
     /// Create a new all-white (0) bitmap.
     pub fn new(width: u32, height: u32) -> Self {

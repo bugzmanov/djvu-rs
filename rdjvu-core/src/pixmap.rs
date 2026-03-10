@@ -9,6 +9,28 @@ pub struct Pixmap {
     pub data: Vec<u8>,
 }
 
+impl Default for Pixmap {
+    fn default() -> Self {
+        Pixmap { width: 0, height: 0, data: Vec::new() }
+    }
+}
+
+impl AsRef<[u8]> for Pixmap {
+    fn as_ref(&self) -> &[u8] {
+        &self.data
+    }
+}
+
+impl std::ops::Index<(u32, u32)> for Pixmap {
+    type Output = [u8];
+
+    /// Returns the 4 RGBA bytes at pixel (x, y).
+    fn index(&self, (x, y): (u32, u32)) -> &[u8] {
+        let idx = (y as usize * self.width as usize + x as usize) * 4;
+        &self.data[idx..idx + 4]
+    }
+}
+
 impl Pixmap {
     /// Create a new pixmap filled with the given RGBA color.
     pub fn new(width: u32, height: u32, r: u8, g: u8, b: u8, a: u8) -> Self {

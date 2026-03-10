@@ -16,7 +16,7 @@
 #![forbid(unsafe_code)]
 
 pub use rdjvu_core::{Bitmap, Error, Pixmap};
-pub use rdjvu_document::{Bookmark, TextLayer, TextZone, TextZoneKind};
+pub use rdjvu_document::{Bookmark, Rotation, TextLayer, TextZone, TextZoneKind};
 
 use self_cell::self_cell;
 
@@ -44,6 +44,15 @@ impl Document {
     pub fn open(path: impl AsRef<std::path::Path>) -> Result<Self, Error> {
         let data = std::fs::read(path.as_ref())
             .map_err(|e| Error::FormatError(format!("failed to read file: {}", e)))?;
+        Self::from_bytes(data)
+    }
+
+    /// Parse a DjVu document from a reader (reads all bytes into memory).
+    pub fn from_reader(reader: impl std::io::Read) -> Result<Self, Error> {
+        let mut reader = reader;
+        let mut data = Vec::new();
+        reader.read_to_end(&mut data)
+            .map_err(|e| Error::FormatError(format!("failed to read: {}", e)))?;
         Self::from_bytes(data)
     }
 
@@ -119,6 +128,16 @@ impl<'a> Page<'a> {
     /// Page resolution in dots per inch.
     pub fn dpi(&self) -> u16 {
         self.dpi
+    }
+
+    /// The 0-based index of this page within the document.
+    pub fn index(&self) -> usize {
+        self.index
+    }
+
+    /// Page rotation from the INFO chunk.
+    pub fn rotation(&self) -> Rotation {
+        self.rotation
     }
 
     /// Render the page to an RGBA pixmap at native resolution.
@@ -209,6 +228,17 @@ impl<'a> Page<'a> {
         rdjvu_render::render_to_size(&page, tw, th)
     }
 }
+
+// Compile-time assertions: Document is Send + Sync.
+#[allow(dead_code)]
+const _: () = {
+    fn assert_send<T: Send>() {}
+    fn assert_sync<T: Sync>() {}
+    fn assertions() {
+        assert_send::<Document>();
+        assert_sync::<Document>();
+    }
+};
 
 #[cfg(test)]
 mod tests {
