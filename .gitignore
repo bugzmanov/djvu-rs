@@ -1,5 +1,10 @@
 /target
-/references
+/references/*
+!/references/djvujs/
+/references/djvujs/*
+!/references/djvujs/library/
+/references/djvujs/library/*
+!/references/djvujs/library/assets/
 /docs
 CLAUDE.md
 fuzz/target/

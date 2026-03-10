@@ -2,8 +2,14 @@
 name = "rdjvu"
 version = "0.1.0"
 edition = "2021"
-license = "MIT"
-description = "Pure Rust DjVu renderer"
+authors = ["Rafael Bagmanov <bugzmanov@gmail.com>"]
+license = "GPL-3.0-or-later"
+description = "Pure Rust DjVu document reader and renderer"
+repository = "https://github.com/bugzmanov/rdjvu"
+readme = "../README.md"
+keywords = ["djvu", "document", "renderer", "image", "parser"]
+categories = ["multimedia::images", "parser-implementations"]
+exclude = ["references/", "tests/golden/", "fuzz/", "*.djvu"]
 
 [dependencies]
 rdjvu-core = { path = "../rdjvu-core" }
