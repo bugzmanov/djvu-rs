@@ -32,7 +32,12 @@ fn main() {
 
     // "After" — render_aa: native render + box downsample with contrast boost
     let after = page.render_aa(display_w, display_h, boldness).unwrap();
-    write_ppm("/tmp/djvu_after.ppm", &after.to_rgb(), after.width, after.height);
+    write_ppm(
+        "/tmp/djvu_after.ppm",
+        &after.to_rgb(),
+        after.width,
+        after.height,
+    );
     eprintln!("Wrote /tmp/djvu_after.ppm (AA with boldness {})", boldness);
 }
 

@@ -15,21 +15,28 @@
 
 #![forbid(unsafe_code)]
 
-mod zp;
-mod bzz;
-pub(crate) mod iff;
-mod jb2;
-mod iw44;
-pub(crate) mod document;
-pub(crate) mod render;
-pub(crate) mod error;
 pub(crate) mod bitmap;
+#[doc(hidden)]
+pub mod bzz;
+#[doc(hidden)]
+pub mod document;
+pub(crate) mod error;
+#[doc(hidden)]
+pub mod iff;
+#[doc(hidden)]
+pub mod iw44;
+#[doc(hidden)]
+pub mod jb2;
 pub(crate) mod pixmap;
+#[doc(hidden)]
+pub mod render;
+#[doc(hidden)]
+pub mod zp;
 
-pub use error::Error;
 pub use bitmap::Bitmap;
-pub use pixmap::Pixmap;
 pub use document::{Bookmark, Rotation, TextLayer, TextZone, TextZoneKind};
+pub use error::Error;
+pub use pixmap::Pixmap;
 
 use self_cell::self_cell;
 
@@ -64,7 +71,8 @@ impl Document {
     pub fn from_reader(reader: impl std::io::Read) -> Result<Self, Error> {
         let mut reader = reader;
         let mut data = Vec::new();
-        reader.read_to_end(&mut data)
+        reader
+            .read_to_end(&mut data)
             .map_err(|e| Error::FormatError(format!("failed to read: {}", e)))?;
         Self::from_bytes(data)
     }
@@ -263,8 +271,7 @@ mod tests {
     }
 
     fn golden_path() -> std::path::PathBuf {
-        std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("tests/golden/composite")
+        std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/golden/composite")
     }
 
     #[test]
@@ -312,7 +319,8 @@ mod tests {
             assert_eq!(
                 pixmap.data.len(),
                 pixmap.width as usize * pixmap.height as usize * 4,
-                "{}: data length mismatch", file
+                "{}: data length mismatch",
+                file
             );
         }
     }
@@ -338,7 +346,10 @@ mod tests {
         let doc = Document::open(assets_path().join("chicken.djvu")).unwrap();
         let pixmap = doc.page(0).unwrap().render().unwrap();
         let rgb = pixmap.to_rgb();
-        assert_eq!(rgb.len(), pixmap.width as usize * pixmap.height as usize * 3);
+        assert_eq!(
+            rgb.len(),
+            pixmap.width as usize * pixmap.height as usize * 3
+        );
     }
 
     #[test]
@@ -495,7 +506,12 @@ mod tests {
     #[test]
     fn thumbnail_carte() {
         let doc = Document::open(assets_path().join("carte.djvu")).unwrap();
-        let thumb = doc.page(0).unwrap().thumbnail().unwrap().expect("carte should have thumbnail");
+        let thumb = doc
+            .page(0)
+            .unwrap()
+            .thumbnail()
+            .unwrap()
+            .expect("carte should have thumbnail");
         assert!(thumb.width > 0 && thumb.width < 500);
         assert!(thumb.height > 0 && thumb.height < 500);
     }

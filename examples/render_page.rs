@@ -4,7 +4,9 @@
 
 fn main() {
     let args: Vec<String> = std::env::args().collect();
-    let path = args.get(1).expect("Usage: render_page <file.djvu> [page] [output.ppm]");
+    let path = args
+        .get(1)
+        .expect("Usage: render_page <file.djvu> [page] [output.ppm]");
     let page_idx: usize = args.get(2).map(|s| s.parse().unwrap()).unwrap_or(0);
     let output = args.get(3).map(|s| s.as_str()).unwrap_or("/tmp/page.ppm");
 

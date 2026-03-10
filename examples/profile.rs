@@ -9,7 +9,11 @@ fn main() {
     let doc = djvu::Document::open(path).unwrap();
     let parse_time = t0.elapsed();
     let n = doc.page_count().min(max_pages);
-    println!("{} pages, parse: {:.1}ms", doc.page_count(), parse_time.as_secs_f64() * 1000.0);
+    println!(
+        "{} pages, parse: {:.1}ms",
+        doc.page_count(),
+        parse_time.as_secs_f64() * 1000.0
+    );
 
     for i in 0..n {
         let page = doc.page(i).unwrap();
@@ -20,9 +24,6 @@ fn main() {
         let _render = page.render();
         let render_ms = t.elapsed().as_secs_f64() * 1000.0;
 
-        println!(
-            "  p{:3} {} render={:.0}ms",
-            i, dims, render_ms
-        );
+        println!("  p{:3} {} render={:.0}ms", i, dims, render_ms);
     }
 }

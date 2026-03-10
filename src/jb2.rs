@@ -24,12 +24,18 @@ impl core::fmt::Display for DecodeError {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
             DecodeError::BadHeaderFlag => write!(f, "JB2: bad flag bit in header"),
-            DecodeError::InheritedDictTooLarge => write!(f, "JB2: inherited dict length exceeds shared dict size"),
-            DecodeError::MissingSharedDict => write!(f, "JB2: stream requires shared dict but none provided"),
+            DecodeError::InheritedDictTooLarge => {
+                write!(f, "JB2: inherited dict length exceeds shared dict size")
+            }
+            DecodeError::MissingSharedDict => {
+                write!(f, "JB2: stream requires shared dict but none provided")
+            }
             DecodeError::ImageTooLarge => write!(f, "JB2: image dimensions too large"),
             DecodeError::EmptyDictReference => write!(f, "JB2: dict reference with empty dict"),
             DecodeError::UnknownRecordType => write!(f, "JB2: unknown record type"),
-            DecodeError::UnexpectedDictRecordType => write!(f, "JB2: unexpected record type in dict stream"),
+            DecodeError::UnexpectedDictRecordType => {
+                write!(f, "JB2: unexpected record type in dict stream")
+            }
         }
     }
 }
@@ -131,7 +137,7 @@ fn decode_num(zp: &mut ZPDecoder, ctx: &mut NumContext, low: i32, high: i32) -> 
                         cutoff -= (range / 2) as i32;
                     }
                 } else {
-                    cutoff += cutoff + 1;
+                    cutoff = cutoff + cutoff + 1;
                 }
             }
             3 => {
@@ -150,7 +156,11 @@ fn decode_num(zp: &mut ZPDecoder, ctx: &mut NumContext, low: i32, high: i32) -> 
         }
     }
 
-    if negative { -cutoff - 1 } else { cutoff }
+    if negative {
+        -cutoff - 1
+    } else {
+        cutoff
+    }
 }
 
 // ============================================================
@@ -367,17 +377,23 @@ pub struct JB2Dict {
     symbols: Vec<Jbm>,
 }
 
-impl JB2Dict {
-    pub fn num_symbols(&self) -> usize {
-        self.symbols.len()
-    }
-}
-
 // ============================================================
 // Blit a symbol onto a page bitmap (OR compositing)
 // ============================================================
 
-fn blit(page: &mut Vec<u8>, mut blit_map: Option<&mut Vec<i32>>, blit_idx: i32, page_w: i32, page_h: i32, symbol: &Jbm, x: i32, y: i32) {
+struct BlitTarget<'a> {
+    page: &'a mut [u8],
+    blit_map: Option<&'a mut [i32]>,
+    page_w: i32,
+    page_h: i32,
+}
+
+fn blit(target: &mut BlitTarget<'_>, blit_idx: i32, symbol: &Jbm, x: i32, y: i32) {
+    let page = &mut target.page;
+    let mut blit_map = target.blit_map.as_deref_mut();
+    let page_w = target.page_w;
+    let page_h = target.page_h;
+
     // Fast path: symbol fully within page bounds — skip per-pixel bounds checks
     if x >= 0 && y >= 0 && x + symbol.width <= page_w && y + symbol.height <= page_h {
         let pw = page_w as usize;
@@ -398,7 +414,9 @@ fn blit(page: &mut Vec<u8>, mut blit_map: Option<&mut Vec<i32>>, blit_idx: i32, 
         // Slow path: symbol partially outside page, need per-pixel bounds checking
         for row in 0..symbol.height {
             let py = y + row;
-            if py < 0 || py >= page_h { continue; }
+            if py < 0 || py >= page_h {
+                continue;
+            }
             for col in 0..symbol.width {
                 if symbol.get(row, col) != 0 {
                     let px = x + col;
@@ -438,14 +456,30 @@ fn page_to_bitmap(page: &[u8], width: i32, height: i32) -> Bitmap {
         for byte_idx in 0..full_bytes {
             let base = byte_idx * 8;
             let mut byte_val = 0u8;
-            if src_row[base] != 0 { byte_val |= 0x80; }
-            if src_row[base + 1] != 0 { byte_val |= 0x40; }
-            if src_row[base + 2] != 0 { byte_val |= 0x20; }
-            if src_row[base + 3] != 0 { byte_val |= 0x10; }
-            if src_row[base + 4] != 0 { byte_val |= 0x08; }
-            if src_row[base + 5] != 0 { byte_val |= 0x04; }
-            if src_row[base + 6] != 0 { byte_val |= 0x02; }
-            if src_row[base + 7] != 0 { byte_val |= 0x01; }
+            if src_row[base] != 0 {
+                byte_val |= 0x80;
+            }
+            if src_row[base + 1] != 0 {
+                byte_val |= 0x40;
+            }
+            if src_row[base + 2] != 0 {
+                byte_val |= 0x20;
+            }
+            if src_row[base + 3] != 0 {
+                byte_val |= 0x10;
+            }
+            if src_row[base + 4] != 0 {
+                byte_val |= 0x08;
+            }
+            if src_row[base + 5] != 0 {
+                byte_val |= 0x04;
+            }
+            if src_row[base + 6] != 0 {
+                byte_val |= 0x02;
+            }
+            if src_row[base + 7] != 0 {
+                byte_val |= 0x01;
+            }
             bm.data[dst_off + byte_idx] = byte_val;
         }
 
@@ -489,11 +523,18 @@ pub fn decode(data: &[u8], shared_dict: Option<&JB2Dict>) -> Result<Bitmap, Deco
 /// Decode a JB2 image stream, returning both the bitmap and a per-pixel blit index map.
 /// The blit index map has the same dimensions as the bitmap (row 0 = top).
 /// Each pixel stores the 0-based blit index that last wrote to it, or -1 if no blit.
-pub fn decode_indexed(data: &[u8], shared_dict: Option<&JB2Dict>) -> Result<(Bitmap, Vec<i32>), DecodeError> {
+pub fn decode_indexed(
+    data: &[u8],
+    shared_dict: Option<&JB2Dict>,
+) -> Result<(Bitmap, Vec<i32>), DecodeError> {
     decode_inner(data, shared_dict, true)
 }
 
-fn decode_inner(data: &[u8], shared_dict: Option<&JB2Dict>, track_blits: bool) -> Result<(Bitmap, Vec<i32>), DecodeError> {
+fn decode_inner(
+    data: &[u8],
+    shared_dict: Option<&JB2Dict>,
+    track_blits: bool,
+) -> Result<(Bitmap, Vec<i32>), DecodeError> {
     let mut zp = ZPDecoder::new(data);
 
     // Contexts
@@ -531,11 +572,19 @@ fn decode_inner(data: &[u8], shared_dict: Option<&JB2Dict>, track_blits: bool) -
     // Decode image dimensions
     let image_width = {
         let w = decode_num(&mut zp, &mut image_size_ctx, 0, 262142);
-        if w == 0 { 200 } else { w }
+        if w == 0 {
+            200
+        } else {
+            w
+        }
     };
     let image_height = {
         let h = decode_num(&mut zp, &mut image_size_ctx, 0, 262142);
-        if h == 0 { 200 } else { h }
+        if h == 0 {
+            200
+        } else {
+            h
+        }
     };
 
     // Flag bit (must be 0)
@@ -565,7 +614,11 @@ fn decode_inner(data: &[u8], shared_dict: Option<&JB2Dict>, track_blits: bool) -
         return Err(DecodeError::ImageTooLarge);
     }
     let mut page = vec![0u8; page_size];
-    let mut blit_map = if track_blits { Some(vec![-1i32; page_size]) } else { None };
+    let mut blit_map = if track_blits {
+        Some(vec![-1i32; page_size])
+    } else {
+        None
+    };
     let mut blit_count: i32 = 0;
 
     // Positioning state
@@ -586,13 +639,32 @@ fn decode_inner(data: &[u8], shared_dict: Option<&JB2Dict>, track_blits: bool) -
                 let bm = decode_bitmap_direct(&mut zp, &mut direct_bitmap_ctx, w, h);
 
                 let (x, y) = decode_symbol_coords(
-                    &mut zp, &mut offset_type_ctx,
-                    &mut hoff_ctx, &mut voff_ctx, &mut shoff_ctx, &mut svoff_ctx,
-                    &mut first_left, &mut first_bottom, &mut last_right, &mut baseline,
-                    bm.width, bm.height,
+                    &mut zp,
+                    &mut offset_type_ctx,
+                    &mut hoff_ctx,
+                    &mut voff_ctx,
+                    &mut shoff_ctx,
+                    &mut svoff_ctx,
+                    &mut first_left,
+                    &mut first_bottom,
+                    &mut last_right,
+                    &mut baseline,
+                    bm.width,
+                    bm.height,
                 );
 
-                blit(&mut page, blit_map.as_mut(), blit_count, image_width, image_height, &bm, x, y);
+                blit(
+                    &mut BlitTarget {
+                        page: &mut page,
+                        blit_map: blit_map.as_deref_mut(),
+                        page_w: image_width,
+                        page_h: image_height,
+                    },
+                    blit_count,
+                    &bm,
+                    x,
+                    y,
+                );
                 blit_count += 1;
                 dict.push(bm.remove_empty_edges());
             }
@@ -610,84 +682,190 @@ fn decode_inner(data: &[u8], shared_dict: Option<&JB2Dict>, track_blits: bool) -
                 let bm = decode_bitmap_direct(&mut zp, &mut direct_bitmap_ctx, w, h);
 
                 let (x, y) = decode_symbol_coords(
-                    &mut zp, &mut offset_type_ctx,
-                    &mut hoff_ctx, &mut voff_ctx, &mut shoff_ctx, &mut svoff_ctx,
-                    &mut first_left, &mut first_bottom, &mut last_right, &mut baseline,
-                    bm.width, bm.height,
+                    &mut zp,
+                    &mut offset_type_ctx,
+                    &mut hoff_ctx,
+                    &mut voff_ctx,
+                    &mut shoff_ctx,
+                    &mut svoff_ctx,
+                    &mut first_left,
+                    &mut first_bottom,
+                    &mut last_right,
+                    &mut baseline,
+                    bm.width,
+                    bm.height,
                 );
 
-                blit(&mut page, blit_map.as_mut(), blit_count, image_width, image_height, &bm, x, y);
+                blit(
+                    &mut BlitTarget {
+                        page: &mut page,
+                        blit_map: blit_map.as_deref_mut(),
+                        page_w: image_width,
+                        page_h: image_height,
+                    },
+                    blit_count,
+                    &bm,
+                    x,
+                    y,
+                );
                 blit_count += 1;
             }
             4 => {
                 // Matched with refinement: add to dict AND blit
-                if dict.is_empty() { return Err(DecodeError::EmptyDictReference); }
-                let index = decode_num(&mut zp, &mut symbol_index_ctx, 0, dict.len() as i32 - 1) as usize;
+                if dict.is_empty() {
+                    return Err(DecodeError::EmptyDictReference);
+                }
+                let index =
+                    decode_num(&mut zp, &mut symbol_index_ctx, 0, dict.len() as i32 - 1) as usize;
                 let wdiff = decode_num(&mut zp, &mut symbol_width_diff_ctx, -262143, 262142);
                 let hdiff = decode_num(&mut zp, &mut symbol_height_diff_ctx, -262143, 262142);
                 let mbm = &dict[index];
                 let cbm_w = mbm.width + wdiff;
                 let cbm_h = mbm.height + hdiff;
-                let cbm = decode_bitmap_ref(&mut zp, &mut refinement_bitmap_ctx, cbm_w, cbm_h, &dict[index]);
-
-                let (x, y) = decode_symbol_coords(
-                    &mut zp, &mut offset_type_ctx,
-                    &mut hoff_ctx, &mut voff_ctx, &mut shoff_ctx, &mut svoff_ctx,
-                    &mut first_left, &mut first_bottom, &mut last_right, &mut baseline,
-                    cbm.width, cbm.height,
+                let cbm = decode_bitmap_ref(
+                    &mut zp,
+                    &mut refinement_bitmap_ctx,
+                    cbm_w,
+                    cbm_h,
+                    &dict[index],
                 );
 
-                blit(&mut page, blit_map.as_mut(), blit_count, image_width, image_height, &cbm, x, y);
+                let (x, y) = decode_symbol_coords(
+                    &mut zp,
+                    &mut offset_type_ctx,
+                    &mut hoff_ctx,
+                    &mut voff_ctx,
+                    &mut shoff_ctx,
+                    &mut svoff_ctx,
+                    &mut first_left,
+                    &mut first_bottom,
+                    &mut last_right,
+                    &mut baseline,
+                    cbm.width,
+                    cbm.height,
+                );
+
+                blit(
+                    &mut BlitTarget {
+                        page: &mut page,
+                        blit_map: blit_map.as_deref_mut(),
+                        page_w: image_width,
+                        page_h: image_height,
+                    },
+                    blit_count,
+                    &cbm,
+                    x,
+                    y,
+                );
                 blit_count += 1;
                 dict.push(cbm.remove_empty_edges());
             }
             5 => {
                 // Matched with refinement: add to dict only
-                if dict.is_empty() { return Err(DecodeError::EmptyDictReference); }
-                let index = decode_num(&mut zp, &mut symbol_index_ctx, 0, dict.len() as i32 - 1) as usize;
+                if dict.is_empty() {
+                    return Err(DecodeError::EmptyDictReference);
+                }
+                let index =
+                    decode_num(&mut zp, &mut symbol_index_ctx, 0, dict.len() as i32 - 1) as usize;
                 let wdiff = decode_num(&mut zp, &mut symbol_width_diff_ctx, -262143, 262142);
                 let hdiff = decode_num(&mut zp, &mut symbol_height_diff_ctx, -262143, 262142);
                 let cbm_w = dict[index].width + wdiff;
                 let cbm_h = dict[index].height + hdiff;
-                let cbm = decode_bitmap_ref(&mut zp, &mut refinement_bitmap_ctx, cbm_w, cbm_h, &dict[index]);
+                let cbm = decode_bitmap_ref(
+                    &mut zp,
+                    &mut refinement_bitmap_ctx,
+                    cbm_w,
+                    cbm_h,
+                    &dict[index],
+                );
                 dict.push(cbm.remove_empty_edges());
             }
             6 => {
                 // Matched with refinement: blit only
-                if dict.is_empty() { return Err(DecodeError::EmptyDictReference); }
-                let index = decode_num(&mut zp, &mut symbol_index_ctx, 0, dict.len() as i32 - 1) as usize;
+                if dict.is_empty() {
+                    return Err(DecodeError::EmptyDictReference);
+                }
+                let index =
+                    decode_num(&mut zp, &mut symbol_index_ctx, 0, dict.len() as i32 - 1) as usize;
                 let wdiff = decode_num(&mut zp, &mut symbol_width_diff_ctx, -262143, 262142);
                 let hdiff = decode_num(&mut zp, &mut symbol_height_diff_ctx, -262143, 262142);
                 let cbm_w = dict[index].width + wdiff;
                 let cbm_h = dict[index].height + hdiff;
-                let cbm = decode_bitmap_ref(&mut zp, &mut refinement_bitmap_ctx, cbm_w, cbm_h, &dict[index]);
-
-                let (x, y) = decode_symbol_coords(
-                    &mut zp, &mut offset_type_ctx,
-                    &mut hoff_ctx, &mut voff_ctx, &mut shoff_ctx, &mut svoff_ctx,
-                    &mut first_left, &mut first_bottom, &mut last_right, &mut baseline,
-                    cbm.width, cbm.height,
+                let cbm = decode_bitmap_ref(
+                    &mut zp,
+                    &mut refinement_bitmap_ctx,
+                    cbm_w,
+                    cbm_h,
+                    &dict[index],
                 );
 
-                blit(&mut page, blit_map.as_mut(), blit_count, image_width, image_height, &cbm, x, y);
+                let (x, y) = decode_symbol_coords(
+                    &mut zp,
+                    &mut offset_type_ctx,
+                    &mut hoff_ctx,
+                    &mut voff_ctx,
+                    &mut shoff_ctx,
+                    &mut svoff_ctx,
+                    &mut first_left,
+                    &mut first_bottom,
+                    &mut last_right,
+                    &mut baseline,
+                    cbm.width,
+                    cbm.height,
+                );
+
+                blit(
+                    &mut BlitTarget {
+                        page: &mut page,
+                        blit_map: blit_map.as_deref_mut(),
+                        page_w: image_width,
+                        page_h: image_height,
+                    },
+                    blit_count,
+                    &cbm,
+                    x,
+                    y,
+                );
                 blit_count += 1;
             }
             7 => {
                 // Matched copy without refinement: blit
-                if dict.is_empty() { return Err(DecodeError::EmptyDictReference); }
-                let index = decode_num(&mut zp, &mut symbol_index_ctx, 0, dict.len() as i32 - 1) as usize;
+                if dict.is_empty() {
+                    return Err(DecodeError::EmptyDictReference);
+                }
+                let index =
+                    decode_num(&mut zp, &mut symbol_index_ctx, 0, dict.len() as i32 - 1) as usize;
                 let bm = &dict[index];
                 let bm_w = bm.width;
                 let bm_h = bm.height;
 
                 let (x, y) = decode_symbol_coords(
-                    &mut zp, &mut offset_type_ctx,
-                    &mut hoff_ctx, &mut voff_ctx, &mut shoff_ctx, &mut svoff_ctx,
-                    &mut first_left, &mut first_bottom, &mut last_right, &mut baseline,
-                    bm_w, bm_h,
+                    &mut zp,
+                    &mut offset_type_ctx,
+                    &mut hoff_ctx,
+                    &mut voff_ctx,
+                    &mut shoff_ctx,
+                    &mut svoff_ctx,
+                    &mut first_left,
+                    &mut first_bottom,
+                    &mut last_right,
+                    &mut baseline,
+                    bm_w,
+                    bm_h,
                 );
 
-                blit(&mut page, blit_map.as_mut(), blit_count, image_width, image_height, &dict[index], x, y);
+                blit(
+                    &mut BlitTarget {
+                        page: &mut page,
+                        blit_map: blit_map.as_deref_mut(),
+                        page_w: image_width,
+                        page_h: image_height,
+                    },
+                    blit_count,
+                    &dict[index],
+                    x,
+                    y,
+                );
                 blit_count += 1;
             }
             8 => {
@@ -701,7 +879,18 @@ fn decode_inner(data: &[u8], shared_dict: Option<&JB2Dict>, track_blits: bool) -
                 let x = left - 1;
                 let y = top - h;
 
-                blit(&mut page, blit_map.as_mut(), blit_count, image_width, image_height, &bm, x, y);
+                blit(
+                    &mut BlitTarget {
+                        page: &mut page,
+                        blit_map: blit_map.as_deref_mut(),
+                        page_w: image_width,
+                        page_h: image_height,
+                    },
+                    blit_count,
+                    &bm,
+                    x,
+                    y,
+                );
                 blit_count += 1;
             }
             9 => {}
@@ -788,13 +977,22 @@ pub fn decode_dict(data: &[u8], inherited: Option<&JB2Dict>) -> Result<JB2Dict, 
                 dict.push(bm.remove_empty_edges());
             }
             5 => {
-                if dict.is_empty() { return Err(DecodeError::EmptyDictReference); }
-                let index = decode_num(&mut zp, &mut symbol_index_ctx, 0, dict.len() as i32 - 1) as usize;
+                if dict.is_empty() {
+                    return Err(DecodeError::EmptyDictReference);
+                }
+                let index =
+                    decode_num(&mut zp, &mut symbol_index_ctx, 0, dict.len() as i32 - 1) as usize;
                 let wdiff = decode_num(&mut zp, &mut symbol_width_diff_ctx, -262143, 262142);
                 let hdiff = decode_num(&mut zp, &mut symbol_height_diff_ctx, -262143, 262142);
                 let cbm_w = dict[index].width + wdiff;
                 let cbm_h = dict[index].height + hdiff;
-                let cbm = decode_bitmap_ref(&mut zp, &mut refinement_bitmap_ctx, cbm_w, cbm_h, &dict[index]);
+                let cbm = decode_bitmap_ref(
+                    &mut zp,
+                    &mut refinement_bitmap_ctx,
+                    cbm_w,
+                    cbm_h,
+                    &dict[index],
+                );
                 dict.push(cbm.remove_empty_edges());
             }
             9 => {}
@@ -872,8 +1070,7 @@ mod tests {
     }
 
     fn golden_path() -> std::path::PathBuf {
-        std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("tests/golden/jb2")
+        std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/golden/jb2")
     }
 
     fn extract_sjbz(djvu_data: &[u8]) -> &[u8] {
@@ -914,15 +1111,23 @@ mod tests {
         let bitmap = decode(&sjbz, None).unwrap();
         let actual_pbm = bitmap.to_pbm();
         let expected_pbm = std::fs::read(golden_path().join("carte_p1_mask.pbm")).unwrap();
-        assert_eq!(actual_pbm.len(), expected_pbm.len(), "carte_p1_mask size mismatch");
+        assert_eq!(
+            actual_pbm.len(),
+            expected_pbm.len(),
+            "carte_p1_mask size mismatch"
+        );
         assert_eq!(actual_pbm, expected_pbm, "carte_p1_mask pixel mismatch");
     }
 
     /// Find the Nth DJVU page form (0-indexed) in a bundled DJVM.
-    fn find_page_form<'a>(file: &'a crate::iff::DjvuFile<'a>, page: usize) -> &'a crate::iff::Chunk<'a> {
+    fn find_page_form<'a>(
+        file: &'a crate::iff::DjvuFile<'a>,
+        page: usize,
+    ) -> &'a crate::iff::Chunk<'a> {
         let mut idx = 0;
         for chunk in file.root.children() {
-            if matches!(chunk, crate::iff::Chunk::Form { secondary_id, .. } if secondary_id == b"DJVU") {
+            if matches!(chunk, crate::iff::Chunk::Form { secondary_id, .. } if secondary_id == b"DJVU")
+            {
                 if idx == page {
                     return chunk;
                 }
@@ -945,7 +1150,10 @@ mod tests {
                 }
             }
         }
-        panic!("DJVI with Djbz not found for {:?}", std::str::from_utf8(name));
+        panic!(
+            "DJVI with Djbz not found for {:?}",
+            std::str::from_utf8(name)
+        );
     }
 
     #[test]
@@ -961,7 +1169,11 @@ mod tests {
         let bitmap = decode(sjbz_data, Some(&shared_dict)).unwrap();
         let actual_pbm = bitmap.to_pbm();
         let expected_pbm = std::fs::read(golden_path().join("djvu3spec_p1_mask.pbm")).unwrap();
-        assert_eq!(actual_pbm.len(), expected_pbm.len(), "djvu3spec_p1_mask size mismatch");
+        assert_eq!(
+            actual_pbm.len(),
+            expected_pbm.len(),
+            "djvu3spec_p1_mask size mismatch"
+        );
         assert_eq!(actual_pbm, expected_pbm, "djvu3spec_p1_mask pixel mismatch");
     }
 
@@ -982,7 +1194,11 @@ mod tests {
         let bitmap = decode(sjbz_data, Some(&shared_dict)).unwrap();
         let actual_pbm = bitmap.to_pbm();
         let expected_pbm = std::fs::read(golden_path().join("djvu3spec_p2_mask.pbm")).unwrap();
-        assert_eq!(actual_pbm.len(), expected_pbm.len(), "djvu3spec_p2_mask size mismatch");
+        assert_eq!(
+            actual_pbm.len(),
+            expected_pbm.len(),
+            "djvu3spec_p2_mask size mismatch"
+        );
         assert_eq!(actual_pbm, expected_pbm, "djvu3spec_p2_mask pixel mismatch");
     }
 
@@ -1001,7 +1217,11 @@ mod tests {
         let bitmap = decode(sjbz_data, Some(&shared_dict)).unwrap();
         let actual_pbm = bitmap.to_pbm();
         let expected_pbm = std::fs::read(golden_path().join("navm_fgbz_p1_mask.pbm")).unwrap();
-        assert_eq!(actual_pbm.len(), expected_pbm.len(), "navm_fgbz_p1_mask size mismatch");
+        assert_eq!(
+            actual_pbm.len(),
+            expected_pbm.len(),
+            "navm_fgbz_p1_mask size mismatch"
+        );
         assert_eq!(actual_pbm, expected_pbm, "navm_fgbz_p1_mask pixel mismatch");
     }
 
@@ -1037,8 +1257,9 @@ mod tests {
         // Crash artifact from fuzzing — must not panic
         let data = std::fs::read(
             std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-                .join("fuzz/artifacts/fuzz_jb2/crash-300468aea78aa31479c595355e2e315798de347a")
-        ).unwrap();
+                .join("fuzz/artifacts/fuzz_jb2/crash-300468aea78aa31479c595355e2e315798de347a"),
+        )
+        .unwrap();
         let _ = decode(&data, None);
         let _ = decode_dict(&data, None);
     }

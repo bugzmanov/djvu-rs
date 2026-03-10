@@ -2,5 +2,5 @@
 use libfuzzer_sys::fuzz_target;
 
 fuzz_target!(|data: &[u8]| {
-    let _ = rdjvu_bzz::decode(data);
+    let _ = djvu::bzz::decode(data);
 });

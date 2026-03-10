@@ -66,7 +66,11 @@ fn decode_binary(zp: &mut ZPDecoder, ctx: &mut [u8], ctxoff: usize, bits: u32) -
 }
 
 /// Decode a single BZZ block.
-fn decode_block(zp: &mut ZPDecoder, ctx: &mut [u8; NUM_CONTEXTS], size: usize) -> Result<Vec<u8>, DecodeError> {
+fn decode_block(
+    zp: &mut ZPDecoder,
+    ctx: &mut [u8; NUM_CONTEXTS],
+    size: usize,
+) -> Result<Vec<u8>, DecodeError> {
     // Decode frequency shift (0, 1, or 2)
     let mut fshift: u32 = 0;
     if zp.decode_passthrough() {
@@ -77,10 +81,7 @@ fn decode_block(zp: &mut ZPDecoder, ctx: &mut [u8; NUM_CONTEXTS], size: usize) -
     }
 
     // Initialize per-block state
-    let mut mtf = [0u8; 256];
-    for i in 0..256 {
-        mtf[i] = i as u8;
-    }
+    let mut mtf: [u8; 256] = core::array::from_fn(|i| i as u8);
     let mut freq = [0u32; FREQMAX];
     let mut fadd: u32 = 4;
     let mut mtfno: u32 = 3;
@@ -89,7 +90,7 @@ fn decode_block(zp: &mut ZPDecoder, ctx: &mut [u8; NUM_CONTEXTS], size: usize) -
     // Decode MTF-encoded symbols
     let mut data = vec![0u8; size];
 
-    for i in 0..size {
+    for (i, data_byte) in data.iter_mut().enumerate() {
         let ctxid = (mtfno.min(CTXIDS as u32 - 1)) as usize;
         let mut ctxoff: usize;
 
@@ -98,68 +99,68 @@ fn decode_block(zp: &mut ZPDecoder, ctx: &mut [u8; NUM_CONTEXTS], size: usize) -
         ctxoff = 0;
         if zp.decode(&mut ctx[ctxoff + ctxid]) {
             mtfno = 0;
-            data[i] = mtf[0];
+            *data_byte = mtf[0];
         }
         // Level 1: mtfno == 1?
         else {
             ctxoff += CTXIDS;
             if zp.decode(&mut ctx[ctxoff + ctxid]) {
                 mtfno = 1;
-                data[i] = mtf[1];
+                *data_byte = mtf[1];
             }
             // Level 2: mtfno in {2, 3}?
             else {
                 ctxoff += CTXIDS;
                 if zp.decode(&mut ctx[ctxoff]) {
                     mtfno = 2 + decode_binary(zp, ctx, ctxoff + 1, 1);
-                    data[i] = mtf[mtfno as usize];
+                    *data_byte = mtf[mtfno as usize];
                 }
                 // Level 3: mtfno in {4..7}?
                 else {
                     ctxoff += 2;
                     if zp.decode(&mut ctx[ctxoff]) {
                         mtfno = 4 + decode_binary(zp, ctx, ctxoff + 1, 2);
-                        data[i] = mtf[mtfno as usize];
+                        *data_byte = mtf[mtfno as usize];
                     }
                     // Level 4: mtfno in {8..15}?
                     else {
                         ctxoff += 4;
                         if zp.decode(&mut ctx[ctxoff]) {
                             mtfno = 8 + decode_binary(zp, ctx, ctxoff + 1, 3);
-                            data[i] = mtf[mtfno as usize];
+                            *data_byte = mtf[mtfno as usize];
                         }
                         // Level 5: mtfno in {16..31}?
                         else {
                             ctxoff += 8;
                             if zp.decode(&mut ctx[ctxoff]) {
                                 mtfno = 16 + decode_binary(zp, ctx, ctxoff + 1, 4);
-                                data[i] = mtf[mtfno as usize];
+                                *data_byte = mtf[mtfno as usize];
                             }
                             // Level 6: mtfno in {32..63}?
                             else {
                                 ctxoff += 16;
                                 if zp.decode(&mut ctx[ctxoff]) {
                                     mtfno = 32 + decode_binary(zp, ctx, ctxoff + 1, 5);
-                                    data[i] = mtf[mtfno as usize];
+                                    *data_byte = mtf[mtfno as usize];
                                 }
                                 // Level 7: mtfno in {64..127}?
                                 else {
                                     ctxoff += 32;
                                     if zp.decode(&mut ctx[ctxoff]) {
                                         mtfno = 64 + decode_binary(zp, ctx, ctxoff + 1, 6);
-                                        data[i] = mtf[mtfno as usize];
+                                        *data_byte = mtf[mtfno as usize];
                                     }
                                     // Level 8: mtfno in {128..255}?
                                     else {
                                         ctxoff += 64;
                                         if zp.decode(&mut ctx[ctxoff]) {
                                             mtfno = 128 + decode_binary(zp, ctx, ctxoff + 1, 7);
-                                            data[i] = mtf[mtfno as usize];
+                                            *data_byte = mtf[mtfno as usize];
                                         }
                                         // Level 9: marker (mtfno == 256)
                                         else {
                                             mtfno = 256;
-                                            data[i] = 0;
+                                            *data_byte = 0;
                                             markerpos = i as i32;
                                         }
                                     }
@@ -173,7 +174,7 @@ fn decode_block(zp: &mut ZPDecoder, ctx: &mut [u8; NUM_CONTEXTS], size: usize) -
 
         // MTF update (move decoded symbol to front)
         if mtfno < 256 {
-            let sym = data[i];
+            let sym = *data_byte;
             // Update frequency tracking
             fadd = fadd.wrapping_add(fadd >> fshift);
             if fadd > 0x10000000 {
@@ -238,9 +239,9 @@ fn inverse_bwt(data: &mut [u8], markerpos: usize) -> Result<Vec<u8>, DecodeError
     // Compute cumulative counts (start positions in sorted order)
     // Position 0 is reserved for the marker
     let mut last: u32 = 1;
-    for i in 0..256 {
-        let tmp = count[i];
-        count[i] = last;
+    for item in &mut count {
+        let tmp = *item;
+        *item = last;
         last += tmp;
     }
 
@@ -266,8 +267,7 @@ mod tests {
     use super::*;
 
     fn golden_path() -> std::path::PathBuf {
-        std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("tests/golden/bzz")
+        std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/golden/bzz")
     }
 
     fn test_bzz_roundtrip(name: &str) {
@@ -275,7 +275,8 @@ mod tests {
         let expected = std::fs::read(golden_path().join(format!("{}.txt", name))).unwrap();
         let decoded = decode(&bzz_data).unwrap();
         assert_eq!(
-            decoded, expected,
+            decoded,
+            expected,
             "BZZ decode mismatch for {}. Got {} bytes, expected {} bytes",
             name,
             decoded.len(),

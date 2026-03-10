@@ -11,6 +11,7 @@ pub enum Chunk<'a> {
         /// The secondary ID (e.g., b"DJVU", b"DJVM", b"DJVI", b"THUM").
         secondary_id: ChunkId,
         /// Total byte length of the FORM payload (from the IFF length field).
+        #[allow(dead_code)]
         length: u32,
         /// Child chunks within this FORM.
         children: Vec<Chunk<'a>>,
@@ -25,14 +26,6 @@ pub enum Chunk<'a> {
 }
 
 impl<'a> Chunk<'a> {
-    /// Get the chunk ID. For FORM chunks, returns b"FORM".
-    pub fn id(&self) -> &ChunkId {
-        match self {
-            Chunk::Form { .. } => b"FORM",
-            Chunk::Leaf { id, .. } => id,
-        }
-    }
-
     /// For leaf chunks, return the data slice. For FORM chunks, returns empty slice.
     pub fn data(&self) -> &'a [u8] {
         match self {
@@ -150,7 +143,13 @@ fn parse_chunk(data: &[u8], offset: usize) -> Result<(Chunk<'_>, usize), Error> 
         ))
     } else {
         let chunk_data = &data[payload_start..payload_end];
-        Ok((Chunk::Leaf { id, data: chunk_data }, padded_total))
+        Ok((
+            Chunk::Leaf {
+                id,
+                data: chunk_data,
+            },
+            padded_total,
+        ))
     }
 }
 
@@ -175,12 +174,14 @@ fn parse_children(data: &[u8], start: usize, end: usize) -> Result<Vec<Chunk<'_>
 /// Produce a structural dump of the chunk tree.
 /// Format: each line has "  " indentation per depth, then "FORM:XXXX [len]" or "XXXX [len]".
 /// This matches the structural parts of djvudump output (without semantic annotations).
+#[cfg(test)]
 pub fn dump(file: &DjvuFile<'_>) -> String {
     let mut out = String::new();
     dump_chunk(&file.root, 1, &mut out);
     out
 }
 
+#[cfg(test)]
 fn dump_chunk(chunk: &Chunk<'_>, depth: usize, out: &mut String) {
     let indent = "  ".repeat(depth);
     match chunk {
@@ -212,8 +213,7 @@ mod tests {
     }
 
     fn golden_path() -> std::path::PathBuf {
-        std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("tests/golden/iff")
+        std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/golden/iff")
     }
 
     /// Parse our structural dump and djvudump output to comparable lines.
@@ -259,7 +259,15 @@ mod tests {
         );
 
         for (i, (a, e)) in actual_lines.iter().zip(expected_lines.iter()).enumerate() {
-            assert_eq!(a, e, "Line {} mismatch for {}\n  actual:   {:?}\n  expected: {:?}", i + 1, djvu_file, a, e);
+            assert_eq!(
+                a,
+                e,
+                "Line {} mismatch for {}\n  actual:   {:?}\n  expected: {:?}",
+                i + 1,
+                djvu_file,
+                a,
+                e
+            );
         }
     }
 
@@ -376,10 +384,10 @@ mod tests {
         // Valid header but chunk size exceeds available data
         let mut data = b"AT&TFORM".to_vec();
         data.extend_from_slice(&100u32.to_be_bytes()); // size = 100
-        data.extend_from_slice(b"DJVU");               // secondary ID
-        data.extend_from_slice(b"INFO");                // leaf chunk ID
-        data.extend_from_slice(&50u32.to_be_bytes());   // leaf size = 50
-        data.extend_from_slice(&[0u8; 10]);             // only 10 bytes of data
+        data.extend_from_slice(b"DJVU"); // secondary ID
+        data.extend_from_slice(b"INFO"); // leaf chunk ID
+        data.extend_from_slice(&50u32.to_be_bytes()); // leaf size = 50
+        data.extend_from_slice(&[0u8; 10]); // only 10 bytes of data
         assert!(parse(&data).is_err());
     }
 
@@ -404,7 +412,11 @@ mod tests {
         let leaf_data = b"hello";
         let leaf_size = leaf_data.len() as u32;
         // pad to even
-        let padded = if leaf_size % 2 == 1 { leaf_size + 1 } else { leaf_size };
+        let padded = if leaf_size % 2 == 1 {
+            leaf_size + 1
+        } else {
+            leaf_size
+        };
         let form_size = 4 + 4 + 4 + padded; // secondary_id + id + size + data
         data.extend_from_slice(&form_size.to_be_bytes());
         data.extend_from_slice(b"DJVU");

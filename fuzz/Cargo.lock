@@ -27,6 +27,21 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9330f8b2ff13f34540b44e946ef35111825727b38d33286ef986142615121801"
 
 [[package]]
+name = "djvu"
+version = "0.1.0"
+dependencies = [
+ "self_cell",
+]
+
+[[package]]
+name = "djvu-fuzz"
+version = "0.0.0"
+dependencies = [
+ "djvu",
+ "libfuzzer-sys",
+]
+
+[[package]]
 name = "find-msvc-tools"
 version = "0.1.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -77,75 +92,10 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "69cdb34c158ceb288df11e18b4bd39de994f6657d83847bdffdbd7f346754b0f"
 
 [[package]]
-name = "rdjvu-bzz"
-version = "0.1.0"
-dependencies = [
- "rdjvu-zp",
-]
-
-[[package]]
-name = "rdjvu-core"
-version = "0.1.0"
-
-[[package]]
-name = "rdjvu-document"
-version = "0.1.0"
-dependencies = [
- "rdjvu-bzz",
- "rdjvu-core",
- "rdjvu-iff",
- "rdjvu-iw44",
- "rdjvu-jb2",
-]
-
-[[package]]
-name = "rdjvu-fuzz"
-version = "0.0.0"
-dependencies = [
- "libfuzzer-sys",
- "rdjvu-bzz",
- "rdjvu-document",
- "rdjvu-iff",
- "rdjvu-iw44",
- "rdjvu-jb2",
- "rdjvu-render",
- "rdjvu-zp",
-]
-
-[[package]]
-name = "rdjvu-iff"
-version = "0.1.0"
-dependencies = [
- "rdjvu-core",
-]
-
-[[package]]
-name = "rdjvu-iw44"
-version = "0.1.0"
-dependencies = [
- "rdjvu-core",
- "rdjvu-zp",
-]
-
-[[package]]
-name = "rdjvu-jb2"
-version = "0.1.0"
-dependencies = [
- "rdjvu-core",
- "rdjvu-zp",
-]
-
-[[package]]
-name = "rdjvu-render"
-version = "0.1.0"
-dependencies = [
- "rdjvu-core",
- "rdjvu-document",
-]
-
-[[package]]
-name = "rdjvu-zp"
-version = "0.1.0"
+name = "self_cell"
+version = "1.2.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b12e76d157a900eb52e81bc6e9f3069344290341720e9178cde2407113ac8d89"
 
 [[package]]
 name = "shlex"

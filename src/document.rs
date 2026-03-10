@@ -1,10 +1,11 @@
 use crate::bitmap::Bitmap;
 use crate::error::Error;
-use crate::pixmap::Pixmap;
-use crate::iff::{self, Chunk, DjvuFile};
+use crate::iff::{Chunk, DjvuFile};
 use crate::iw44::IW44Image;
 use crate::jb2::JB2Dict;
+use crate::pixmap::Pixmap;
 
+#[cfg(test)]
 pub use crate::iw44::NormalizedPlanes;
 
 /// A bookmark entry from the NAVM chunk (table of contents).
@@ -30,9 +31,7 @@ pub struct PageInfo {
     pub width: u16,
     pub height: u16,
     pub dpi: u16,
-    pub gamma: f32,
     pub rotation: Rotation,
-    pub version: (u8, u8),
 }
 
 /// FGbz palette: per-blit color indices into an RGB palette.
@@ -124,7 +123,10 @@ impl<'a> Document<'a> {
     pub fn parse(data: &'a [u8]) -> Result<Self, Error> {
         let file = crate::iff::parse(data)?;
         match &file.root {
-            Chunk::Form { secondary_id, .. } if secondary_id == b"DJVU" => {
+            Chunk::Form {
+                secondary_id: [b'D', b'J', b'V', b'U'],
+                ..
+            } => {
                 Ok(Document {
                     file,
                     dirm_entries: vec![],
@@ -132,19 +134,31 @@ impl<'a> Document<'a> {
                     is_single_page: true,
                 })
             }
-            Chunk::Form { secondary_id, children, .. } if secondary_id == b"DJVM" => {
+            Chunk::Form {
+                secondary_id: [b'D', b'J', b'V', b'M'],
+                children,
+                ..
+            } => {
                 // Find and parse DIRM chunk
-                let dirm_chunk = children.iter().find_map(|c| match c {
-                    Chunk::Leaf { id, data } if id == b"DIRM" => Some(*data),
-                    _ => None,
-                }).ok_or(Error::MissingChunk("DIRM"))?;
+                let dirm_chunk = children
+                    .iter()
+                    .find_map(|c| match c {
+                        Chunk::Leaf {
+                            id: [b'D', b'I', b'R', b'M'],
+                            data,
+                        } => Some(*data),
+                        _ => None,
+                    })
+                    .ok_or(Error::MissingChunk("DIRM"))?;
 
                 let (dirm_entries, is_bundled) = parse_dirm(dirm_chunk)?;
                 if !is_bundled {
                     return Err(Error::Unsupported("indirect DJVM not supported"));
                 }
 
-                let page_indices: Vec<usize> = dirm_entries.iter().enumerate()
+                let page_indices: Vec<usize> = dirm_entries
+                    .iter()
+                    .enumerate()
                     .filter(|(_, e)| e.comp_type == ComponentType::Page)
                     .map(|(i, _)| i)
                     .collect();
@@ -168,7 +182,11 @@ impl<'a> Document<'a> {
     /// Access a page by 0-based index.
     pub fn page(&self, index: usize) -> Result<Page<'_>, Error> {
         if index >= self.page_count() {
-            return Err(Error::FormatError(format!("page index {} out of range ({})", index, self.page_count())));
+            return Err(Error::FormatError(format!(
+                "page index {} out of range ({})",
+                index,
+                self.page_count()
+            )));
         }
 
         if self.is_single_page {
@@ -184,12 +202,21 @@ impl<'a> Document<'a> {
     /// Get the FORM chunk for a DIRM component by its dirm index.
     /// In bundled documents, FORM children after DIRM/NAVM correspond to DIRM entries in order.
     fn get_component_form(&self, dirm_index: usize) -> Result<&Chunk<'a>, Error> {
-        let forms: Vec<&Chunk<'a>> = self.file.root.children().iter()
+        let forms: Vec<&Chunk<'a>> = self
+            .file
+            .root
+            .children()
+            .iter()
             .filter(|c| matches!(c, Chunk::Form { .. }))
             .collect();
 
-        forms.get(dirm_index).copied()
-            .ok_or(Error::FormatError(format!("component {} not found", dirm_index)))
+        forms
+            .get(dirm_index)
+            .copied()
+            .ok_or(Error::FormatError(format!(
+                "component {} not found",
+                dirm_index
+            )))
     }
 
     /// Parse the NAVM bookmarks (table of contents).
@@ -236,19 +263,23 @@ impl<'a> Document<'a> {
                 continue;
             }
             let form = self.get_component_form(i)?;
-            let th44_chunks: Vec<&[u8]> = form.find_all(b"TH44")
+            let th44_chunks: Vec<&[u8]> = form
+                .find_all(b"TH44")
                 .into_iter()
                 .map(|c| c.data())
                 .collect();
 
             let mut img = IW44Image::new();
             for chunk_data in &th44_chunks {
-                if chunk_data.is_empty() { continue; }
+                if chunk_data.is_empty() {
+                    continue;
+                }
                 let serial = chunk_data[0];
                 if serial == 0 && img.width() > 0 {
                     // Previous thumbnail is complete
                     if thumb_idx == page_index {
-                        let pm = img.to_pixmap()
+                        let pm = img
+                            .to_pixmap()
                             .map_err(|e| Error::FormatError(e.to_string()))?;
                         return Ok(Some(pm));
                     }
@@ -261,7 +292,8 @@ impl<'a> Document<'a> {
             // Handle last thumbnail in this THUM
             if img.width() > 0 {
                 if thumb_idx == page_index {
-                    let pm = img.to_pixmap()
+                    let pm = img
+                        .to_pixmap()
                         .map_err(|e| Error::FormatError(e.to_string()))?;
                     return Ok(Some(pm));
                 }
@@ -284,7 +316,10 @@ impl<'a> Document<'a> {
             }
         }
 
-        Err(Error::FormatError(format!("INCL target '{}' not found", ref_id)))
+        Err(Error::FormatError(format!(
+            "INCL target '{}' not found",
+            ref_id
+        )))
     }
 }
 
@@ -297,20 +332,24 @@ pub struct Page<'a> {
 
 impl<'a> Page<'a> {
     fn from_form(form: &'a Chunk<'a>, doc: &'a Document<'a>) -> Result<Self, Error> {
-        let info_chunk = form.find_first(b"INFO")
+        let info_chunk = form
+            .find_first(b"INFO")
             .ok_or(Error::MissingChunk("INFO"))?;
         let info = parse_info(info_chunk.data())?;
         Ok(Page { info, form, doc })
     }
 
+    #[cfg(test)]
     pub fn has_mask(&self) -> bool {
         self.form.find_first(b"Sjbz").is_some()
     }
 
+    #[cfg(test)]
     pub fn has_background(&self) -> bool {
         self.form.find_first(b"BG44").is_some()
     }
 
+    #[cfg(test)]
     pub fn has_foreground(&self) -> bool {
         self.form.find_first(b"FG44").is_some()
     }
@@ -353,7 +392,8 @@ impl<'a> Page<'a> {
             Some(img) => img,
             None => return Ok(None),
         };
-        let pm = img.to_pixmap()
+        let pm = img
+            .to_pixmap()
             .map_err(|e| Error::FormatError(e.to_string()))?;
         Ok(Some(pm))
     }
@@ -364,17 +404,20 @@ impl<'a> Page<'a> {
             Some(img) => img,
             None => return Ok(None),
         };
-        let pm = img.to_pixmap()
+        let pm = img
+            .to_pixmap()
             .map_err(|e| Error::FormatError(e.to_string()))?;
         Ok(Some(pm))
     }
 
+    #[cfg(test)]
     pub fn decode_background_planes(&self) -> Result<Option<NormalizedPlanes>, Error> {
         let img = match self.decode_iw44_layer(b"BG44")? {
             Some(img) => img,
             None => return Ok(None),
         };
-        let planes = img.to_normalized_planes_subsample(1)
+        let planes = img
+            .to_normalized_planes_subsample(1)
             .map_err(|e| Error::FormatError(e.to_string()))?;
         Ok(Some(planes))
     }
@@ -437,7 +480,9 @@ impl<'a> Page<'a> {
     }
 
     fn decode_iw44_layer(&self, chunk_id: &[u8; 4]) -> Result<Option<IW44Image>, Error> {
-        let chunks: Vec<&[u8]> = self.form.find_all(chunk_id)
+        let chunks: Vec<&[u8]> = self
+            .form
+            .find_all(chunk_id)
             .into_iter()
             .map(|c| c.data())
             .collect();
@@ -466,8 +511,8 @@ fn parse_info(data: &[u8]) -> Result<PageInfo, Error> {
 
     let width = u16::from_be_bytes([data[0], data[1]]);
     let height = u16::from_be_bytes([data[2], data[3]]);
-    let minver = data[4];
-    let majver = if data.len() > 5 { data[5] } else { 0 };
+    let _minver = data[4];
+    let _majver = if data.len() > 5 { data[5] } else { 0 };
 
     // DPI is little-endian (unusual for IFF)
     let raw_dpi = if data.len() >= 8 {
@@ -475,11 +520,11 @@ fn parse_info(data: &[u8]) -> Result<PageInfo, Error> {
     } else {
         300
     };
-    let dpi = if (25..=6000).contains(&raw_dpi) { raw_dpi } else { 300 };
-
-    let raw_gamma = if data.len() >= 9 { data[8] } else { 22 };
-    let gamma_val = raw_gamma.clamp(3, 50);
-    let gamma = gamma_val as f32 / 10.0;
+    let dpi = if (25..=6000).contains(&raw_dpi) {
+        raw_dpi
+    } else {
+        300
+    };
 
     let flags = if data.len() >= 10 { data[9] } else { 0 };
     let rotation = match flags & 0x07 {
@@ -493,9 +538,7 @@ fn parse_info(data: &[u8]) -> Result<PageInfo, Error> {
         width,
         height,
         dpi,
-        gamma,
         rotation,
-        version: (majver, minver),
     })
 }
 
@@ -525,8 +568,7 @@ fn parse_dirm(data: &[u8]) -> Result<(Vec<DirmEntry>, bool), Error> {
 
     // Remaining bytes are BZZ-compressed metadata
     let bzz_data = &data[pos..];
-    let meta = crate::bzz::decode(bzz_data)
-        .map_err(|e| Error::FormatError(e.to_string()))?;
+    let meta = crate::bzz::decode(bzz_data).map_err(|e| Error::FormatError(e.to_string()))?;
 
     // Parse metadata: for each component, read size(3), flags(1), id(strNT), name?(strNT), title?(strNT)
     let mut mpos = 0;
@@ -542,10 +584,10 @@ fn parse_dirm(data: &[u8]) -> Result<(Vec<DirmEntry>, bool), Error> {
 
     // Read IDs and optional name/title strings
     let mut entries = Vec::with_capacity(nfiles);
-    for i in 0..nfiles {
+    for &flag in flags.iter().take(nfiles) {
         let id = read_str_nt(&meta, &mut mpos)?;
-        let has_name = (flags[i] & 0x80) != 0;
-        let has_title = (flags[i] & 0x40) != 0;
+        let has_name = (flag & 0x80) != 0;
+        let has_title = (flag & 0x40) != 0;
         if has_name {
             let _ = read_str_nt(&meta, &mut mpos)?;
         }
@@ -553,7 +595,7 @@ fn parse_dirm(data: &[u8]) -> Result<(Vec<DirmEntry>, bool), Error> {
             let _ = read_str_nt(&meta, &mut mpos)?;
         }
 
-        let comp_type = match flags[i] & 0x3f {
+        let comp_type = match flag & 0x3f {
             1 => ComponentType::Page,
             2 => ComponentType::Thumbnail,
             _ => ComponentType::Shared,
@@ -620,8 +662,8 @@ fn parse_fgbz(data: &[u8]) -> Result<Palette, Error> {
             | (data[idx_start + 2] as u32);
 
         let bzz_data = &data[idx_start + 3..];
-        let decoded = crate::bzz::decode(bzz_data)
-            .map_err(|e| Error::FormatError(e.to_string()))?;
+        let decoded =
+            crate::bzz::decode(bzz_data).map_err(|e| Error::FormatError(e.to_string()))?;
 
         // Each index is i16be
         let num_indices = data_size as usize;
@@ -658,7 +700,11 @@ fn parse_bookmark(data: &[u8], pos: &mut usize, counter: &mut usize) -> Result<B
         children.push(parse_bookmark(data, pos, counter)?);
     }
 
-    Ok(Bookmark { title, url, children })
+    Ok(Bookmark {
+        title,
+        url,
+        children,
+    })
 }
 
 fn read_navm_string(data: &[u8], pos: &mut usize) -> Result<String, Error> {
@@ -715,7 +761,10 @@ fn parse_text_layer(data: &[u8]) -> Result<Option<TextLayer>, Error> {
     }
 
     let root = parse_text_zone(data, &mut pos, None, None)?;
-    Ok(Some(TextLayer { text, root: Some(root) }))
+    Ok(Some(TextLayer {
+        text,
+        root: Some(root),
+    }))
 }
 
 /// Internal context for delta-encoded zone coordinates.
@@ -749,7 +798,12 @@ fn parse_text_zone(
         5 => TextZoneKind::Line,
         6 => TextZoneKind::Word,
         7 => TextZoneKind::Character,
-        _ => return Err(Error::FormatError(format!("unknown text zone type {}", type_byte))),
+        _ => {
+            return Err(Error::FormatError(format!(
+                "unknown text zone type {}",
+                type_byte
+            )))
+        }
     };
 
     // Read raw delta-encoded values
@@ -784,7 +838,14 @@ fn parse_text_zone(
     // Read children count (i24)
     let children_count = read_text_i24(data, pos)?.max(0) as usize;
 
-    let ctx = ZoneCtx { x, y, width, height, text_start, text_len };
+    let ctx = ZoneCtx {
+        x,
+        y,
+        width,
+        height,
+        text_start,
+        text_len,
+    };
 
     let mut children = Vec::with_capacity(children_count);
     let mut prev_child: Option<ZoneCtx> = None;
@@ -838,9 +899,8 @@ fn read_text_i24(data: &[u8], pos: &mut usize) -> Result<i32, Error> {
     if *pos + 3 > data.len() {
         return Err(Error::UnexpectedEof);
     }
-    let val = ((data[*pos] as i32) << 16)
-        | ((data[*pos + 1] as i32) << 8)
-        | (data[*pos + 2] as i32);
+    let val =
+        ((data[*pos] as i32) << 16) | ((data[*pos + 1] as i32) << 8) | (data[*pos + 2] as i32);
     *pos += 3;
     Ok(val)
 }
@@ -855,8 +915,7 @@ mod tests {
     }
 
     fn golden_path() -> std::path::PathBuf {
-        std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("tests/golden/document")
+        std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/golden/document")
     }
 
     #[test]
@@ -872,7 +931,12 @@ mod tests {
         for (file, expected) in cases {
             let data = std::fs::read(assets_path().join(file)).unwrap();
             let doc = Document::parse(&data).unwrap();
-            assert_eq!(doc.page_count(), *expected, "page count mismatch for {}", file);
+            assert_eq!(
+                doc.page_count(),
+                *expected,
+                "page count mismatch for {}",
+                file
+            );
         }
     }
 
@@ -885,7 +949,12 @@ mod tests {
         for (i, line) in golden.lines().enumerate() {
             let page = doc.page(i).unwrap();
             let expected = format!("width={} height={}", page.info.width, page.info.height);
-            assert_eq!(expected, line.trim(), "size mismatch for navm_fgbz page {}", i + 1);
+            assert_eq!(
+                expected,
+                line.trim(),
+                "size mismatch for navm_fgbz page {}",
+                i + 1
+            );
         }
     }
 
@@ -894,12 +963,20 @@ mod tests {
         let data = std::fs::read(assets_path().join("DjVu3Spec_bundled.djvu")).unwrap();
         let doc = Document::parse(&data).unwrap();
 
-        let golden = std::fs::read_to_string(golden_path().join("djvu3spec_bundled_sizes.txt")).unwrap();
+        let golden =
+            std::fs::read_to_string(golden_path().join("djvu3spec_bundled_sizes.txt")).unwrap();
         for (i, line) in golden.lines().enumerate() {
-            if line.trim().is_empty() { continue; }
+            if line.trim().is_empty() {
+                continue;
+            }
             let page = doc.page(i).unwrap();
             let expected = format!("width={} height={}", page.info.width, page.info.height);
-            assert_eq!(expected, line.trim(), "size mismatch for djvu3spec page {}", i + 1);
+            assert_eq!(
+                expected,
+                line.trim(),
+                "size mismatch for djvu3spec page {}",
+                i + 1
+            );
         }
     }
 
@@ -995,8 +1072,16 @@ mod tests {
     fn debug_bg_lowres_vs_ddjvu() {
         let cases = [
             ("carte.djvu", 0usize, "/tmp/rdjvu_debug/carte_bg_sub3.ppm"),
-            ("colorbook.djvu", 0usize, "/tmp/rdjvu_debug/colorbook_p1_bg_sub3.ppm"),
-            ("navm_fgbz.djvu", 3usize, "/tmp/rdjvu_debug/navm_p4_bg_sub3.ppm"),
+            (
+                "colorbook.djvu",
+                0usize,
+                "/tmp/rdjvu_debug/colorbook_p1_bg_sub3.ppm",
+            ),
+            (
+                "navm_fgbz.djvu",
+                3usize,
+                "/tmp/rdjvu_debug/navm_p4_bg_sub3.ppm",
+            ),
         ];
         for (file, page_idx, ref_file) in cases {
             let ref_path = std::path::Path::new(ref_file);
@@ -1010,8 +1095,18 @@ mod tests {
             let actual = bg.to_ppm();
             let expected = std::fs::read(ref_path).unwrap();
             let header_end = actual.iter().position(|&b| b == b'\n').unwrap() + 1;
-            let header_end = header_end + actual[header_end..].iter().position(|&b| b == b'\n').unwrap() + 1;
-            let header_end = header_end + actual[header_end..].iter().position(|&b| b == b'\n').unwrap() + 1;
+            let header_end = header_end
+                + actual[header_end..]
+                    .iter()
+                    .position(|&b| b == b'\n')
+                    .unwrap()
+                + 1;
+            let header_end = header_end
+                + actual[header_end..]
+                    .iter()
+                    .position(|&b| b == b'\n')
+                    .unwrap()
+                + 1;
             let a = &actual[header_end..];
             let e = &expected[header_end..];
             let mut diff_px = 0usize;
@@ -1142,8 +1237,7 @@ mod tests {
     // --- Text extraction tests ---
 
     fn text_golden_path() -> std::path::PathBuf {
-        std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("tests/golden/text")
+        std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/golden/text")
     }
 
     /// Format a TextZone tree as djvused print-txt output for comparison.
@@ -1167,9 +1261,15 @@ mod tests {
             let text = layer.zone_text(zone);
             let trimmed = text.trim_end();
             let escaped = djvused_escape(trimmed);
-            out.push_str(&format!("{}({} {} {} {} {} \"{}\")", pad, kind_str, zone.x, zone.y, x2, y2, escaped));
+            out.push_str(&format!(
+                "{}({} {} {} {} {} \"{}\")",
+                pad, kind_str, zone.x, zone.y, x2, y2, escaped
+            ));
         } else {
-            out.push_str(&format!("{}({} {} {} {} {}", pad, kind_str, zone.x, zone.y, x2, y2));
+            out.push_str(&format!(
+                "{}({} {} {} {} {}",
+                pad, kind_str, zone.x, zone.y, x2, y2
+            ));
             for child in &zone.children {
                 out.push('\n');
                 out.push_str(&format_zone(layer, child, indent + 1));
@@ -1316,11 +1416,25 @@ mod tests {
     fn thumbnail_carte() {
         let data = std::fs::read(assets_path().join("carte.djvu")).unwrap();
         let doc = Document::parse(&data).unwrap();
-        let thumb = doc.thumbnail(0).unwrap().expect("carte should have a thumbnail");
+        let thumb = doc
+            .thumbnail(0)
+            .unwrap()
+            .expect("carte should have a thumbnail");
         // Thumbnail should be much smaller than the page (4200x2556)
-        assert!(thumb.width > 0 && thumb.width < 500, "thumb width: {}", thumb.width);
-        assert!(thumb.height > 0 && thumb.height < 500, "thumb height: {}", thumb.height);
-        assert_eq!(thumb.data.len(), thumb.width as usize * thumb.height as usize * 4);
+        assert!(
+            thumb.width > 0 && thumb.width < 500,
+            "thumb width: {}",
+            thumb.width
+        );
+        assert!(
+            thumb.height > 0 && thumb.height < 500,
+            "thumb height: {}",
+            thumb.height
+        );
+        assert_eq!(
+            thumb.data.len(),
+            thumb.width as usize * thumb.height as usize * 4
+        );
     }
 
     #[test]
@@ -1330,11 +1444,16 @@ mod tests {
         let mut count = 0;
         for i in 0..doc.page_count() {
             if let Some(thumb) = doc.thumbnail(i).unwrap() {
-                assert!(thumb.width > 0 && thumb.height > 0, "page {} thumb empty", i);
+                assert!(
+                    thumb.width > 0 && thumb.height > 0,
+                    "page {} thumb empty",
+                    i
+                );
                 assert_eq!(
                     thumb.data.len(),
                     thumb.width as usize * thumb.height as usize * 4,
-                    "page {} thumb data mismatch", i
+                    "page {} thumb data mismatch",
+                    i
                 );
                 count += 1;
             }

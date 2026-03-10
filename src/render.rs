@@ -1,7 +1,7 @@
 use crate::bitmap::Bitmap;
+use crate::document::{Page, Palette, Rotation};
 use crate::error::Error;
 use crate::pixmap::Pixmap;
-use crate::document::{Page, Palette, Rotation};
 
 /// Render a DjVu page to an RGBA pixmap at native resolution.
 pub fn render(page: &Page) -> Result<Pixmap, Error> {
@@ -20,7 +20,12 @@ pub fn render_to_size(page: &Page, w: u32, h: u32) -> Result<Pixmap, Error> {
 /// bitmap `dilate_passes` times before compositing. Each pass thickens every
 /// black stroke by ~1 pixel in each direction, improving legibility when the
 /// page is displayed at reduced size.
-pub fn render_to_size_bold(page: &Page, w: u32, h: u32, dilate_passes: u32) -> Result<Pixmap, Error> {
+pub fn render_to_size_bold(
+    page: &Page,
+    w: u32,
+    h: u32,
+    dilate_passes: u32,
+) -> Result<Pixmap, Error> {
     render_to_size_inner(page, w, h, dilate_passes)
 }
 
@@ -137,7 +142,7 @@ fn composite_bilevel(w: u32, h: u32, mask: &Bitmap, page_w: u32, page_h: u32) ->
             let row_base = y as usize * stride;
             let mut x = 0u32;
             // Process 8 pixels at a time from packed mask bytes
-            for byte_idx in 0..(w as usize + 7) / 8 {
+            for byte_idx in 0..(w as usize).div_ceil(8) {
                 let byte = mask.data[row_base + byte_idx];
                 if byte == 0 {
                     // All 8 pixels white — skip
@@ -306,6 +311,7 @@ fn palette_color(pal: &Palette, blit_idx: i32) -> (u8, u8, u8) {
     (0, 0, 0)
 }
 
+#[allow(clippy::too_many_arguments)]
 fn composite_palette(
     w: u32,
     h: u32,
@@ -374,10 +380,10 @@ fn composite_palette_no_bg(
 
 /// Precomputed scale factors for mapping output coords → page coords.
 struct PageMapper {
-    scale_x: f64,  // page_w / ow
-    scale_y: f64,  // page_h / oh
-    max_x: u32,    // page_w - 1
-    max_y: u32,    // page_h - 1
+    scale_x: f64, // page_w / ow
+    scale_y: f64, // page_h / oh
+    max_x: u32,   // page_w - 1
+    max_y: u32,   // page_h - 1
     identity_x: bool,
     identity_y: bool,
 }
@@ -422,7 +428,8 @@ struct NearestSampler {
 
 impl NearestSampler {
     fn new(src: &Pixmap, page_w: u32, page_h: u32) -> Self {
-        let (reduction, _, _, virt_page_w, virt_page_h) = layer_virtual_geometry(src, page_w, page_h);
+        let (reduction, _, _, virt_page_w, virt_page_h) =
+            layer_virtual_geometry(src, page_w, page_h);
         let y_shift = src.height.saturating_mul(reduction).saturating_sub(page_h);
         NearestSampler {
             reduction,
@@ -445,8 +452,8 @@ impl NearestSampler {
 }
 
 fn layer_virtual_geometry(src: &Pixmap, page_w: u32, page_h: u32) -> (u32, u32, u32, u32, u32) {
-    let red_w = (page_w + src.width - 1) / src.width;
-    let red_h = (page_h + src.height - 1) / src.height;
+    let red_w = page_w.div_ceil(src.width);
+    let red_h = page_h.div_ceil(src.height);
     let reduction = red_w.max(red_h).max(1);
     let virt_w = (page_w / reduction).max(1);
     let virt_h = (page_h / reduction).max(1);
@@ -509,8 +516,7 @@ fn prepare_coord(src_size: u32, out_size: u32) -> Vec<u32> {
 /// 2. Interpolation uses LUT (no multiplication)
 /// 3. Horizontal and vertical passes are separated (cache-friendly)
 fn scale_layer_bilinear(src: &Pixmap, page_w: u32, page_h: u32) -> Pixmap {
-    let (_, virt_w, virt_h, virt_page_w, virt_page_h) =
-        layer_virtual_geometry(src, page_w, page_h);
+    let (_, virt_w, virt_h, virt_page_w, virt_page_h) = layer_virtual_geometry(src, page_w, page_h);
 
     // Output dimensions in virtual page space
     let ow = virt_page_w;
@@ -535,8 +541,7 @@ fn scale_layer_bilinear(src: &Pixmap, page_w: u32, page_h: u32) -> Pixmap {
     for sy in 0..sh {
         let src_row_off = sy * sw;
         let dst_row_off = sy * ow_us * 3;
-        for dx in 0..ow_us {
-            let coord = hcoord[dx];
+        for (dx, &coord) in hcoord.iter().enumerate().take(ow_us) {
             let ix = ((coord >> FRACBITS) as usize).min(sw_m1);
             let fx = (coord & FRACMASK) as usize;
             let ix1 = (ix + 1).min(sw_m1);
@@ -567,8 +572,7 @@ fn scale_layer_bilinear(src: &Pixmap, page_w: u32, page_h: u32) -> Pixmap {
     // Pass 2: vertical interpolation on hbuf → output (ow × oh)
     let mut out = Pixmap::white(ow, oh);
     let hstride = ow_us * 3;
-    for dy in 0..oh as usize {
-        let coord = vcoord[dy];
+    for (dy, &coord) in vcoord.iter().enumerate().take(oh as usize) {
         let iy = ((coord >> FRACBITS) as usize).min(sh_m1);
         let fy = (coord & FRACMASK) as usize;
         let iy1 = (iy + 1).min(sh_m1);
@@ -750,7 +754,11 @@ fn box_downsample_boost(src: &Pixmap, tw: u32, th: u32, boldness: f32) -> Pixmap
             let is_grayscale = mx - mn < 40;
             let is_near_white = mn > 220;
             let (r, g, b) = if is_grayscale && is_near_white {
-                (lut[r_avg as usize], lut[g_avg as usize], lut[b_avg as usize])
+                (
+                    lut[r_avg as usize],
+                    lut[g_avg as usize],
+                    lut[b_avg as usize],
+                )
             } else {
                 (r_avg, g_avg, b_avg)
             };
@@ -817,6 +825,13 @@ fn rotate_cw270(src: &Pixmap) -> Pixmap {
 
 #[cfg(test)]
 mod tests {
+    #![allow(
+        clippy::manual_div_ceil,
+        clippy::needless_range_loop,
+        clippy::precedence,
+        clippy::unnecessary_cast
+    )]
+
     use super::*;
     use crate::document::Document;
 
@@ -839,8 +854,7 @@ mod tests {
     }
 
     fn golden_path() -> std::path::PathBuf {
-        std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("tests/golden/composite")
+        std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/golden/composite")
     }
 
     fn render_page(file: &str, page_idx: usize) -> Pixmap {
@@ -2636,9 +2650,7 @@ mod tests {
         };
 
         let scaled_bg = scale_layer_bilinear(&bg, w, h);
-        compare("current_float", &|x, y| {
-            sample_scaled(&scaled_bg, x, y)
-        });
+        compare("current_float", &|x, y| sample_scaled(&scaled_bg, x, y));
 
         compare("fixed16_direct", &|x, y| {
             let sw = virt_w as i64;

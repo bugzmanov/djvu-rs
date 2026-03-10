@@ -3,18 +3,12 @@
 /// Pixels are packed 8-per-byte, MSB first within each byte.
 /// Each row is padded to a byte boundary.
 /// Pixel value 1 = black, 0 = white (matching PBM convention).
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Bitmap {
     pub width: u32,
     pub height: u32,
     /// Packed pixel data, row-major. Row stride = `row_stride()` bytes.
     pub data: Vec<u8>,
-}
-
-impl Default for Bitmap {
-    fn default() -> Self {
-        Bitmap { width: 0, height: 0, data: Vec::new() }
-    }
 }
 
 impl Bitmap {
@@ -35,7 +29,7 @@ impl Bitmap {
     }
 
     fn compute_row_stride(width: u32) -> usize {
-        (width as usize + 7) / 8
+        (width as usize).div_ceil(8)
     }
 
     /// Get pixel value at (x, y). Returns `true` if black (1).

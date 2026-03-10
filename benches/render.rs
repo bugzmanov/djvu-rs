@@ -2,7 +2,7 @@ use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
 use std::path::PathBuf;
 
 fn assets_path() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../references/djvujs/library/assets")
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("references/djvujs/library/assets")
 }
 
 // --- Full render (decode + composite) ---

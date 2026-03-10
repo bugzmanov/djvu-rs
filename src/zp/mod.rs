@@ -115,7 +115,8 @@ impl<'a> ZPDecoder<'a> {
             self.scount -= shift as i32;
             self.a = ((self.a as u32) << shift) as u16;
             let mask = (1u32 << shift) - 1;
-            self.c = ((self.c as u32) << shift | ((self.buffer >> self.scount as u32) & mask)) as u16;
+            self.c =
+                ((self.c as u32) << shift | ((self.buffer >> self.scount as u32) & mask)) as u16;
 
             if self.scount < 16 {
                 self.preload();
@@ -160,7 +161,6 @@ impl<'a> ZPDecoder<'a> {
 
     #[inline(always)]
     fn decode_passthrough_with_z(&mut self, z: u16) -> bool {
-
         if z > self.c {
             // Bit is 1
             let z_comp = 0x10000u32 - z as u32;
@@ -171,7 +171,8 @@ impl<'a> ZPDecoder<'a> {
             self.scount -= shift as i32;
             self.a = ((self.a as u32) << shift) as u16;
             let mask = (1u32 << shift) - 1;
-            self.c = ((self.c as u32) << shift | ((self.buffer >> self.scount as u32) & mask)) as u16;
+            self.c =
+                ((self.c as u32) << shift | ((self.buffer >> self.scount as u32) & mask)) as u16;
 
             if self.scount < 16 {
                 self.preload();

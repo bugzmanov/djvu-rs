@@ -27,7 +27,9 @@ impl core::fmt::Display for DecodeError {
             DecodeError::HeaderTooShort => write!(f, "IW44: first chunk header too short"),
             DecodeError::ZeroDimension => write!(f, "IW44: zero dimension"),
             DecodeError::ImageTooLarge => write!(f, "IW44: image dimensions too large"),
-            DecodeError::MissingFirstChunk => write!(f, "IW44: subsequent chunk before first chunk"),
+            DecodeError::MissingFirstChunk => {
+                write!(f, "IW44: subsequent chunk before first chunk")
+            }
             DecodeError::InvalidSubsample => write!(f, "IW44: subsample must be >= 1"),
             DecodeError::MissingCodec => write!(f, "IW44: no codec initialized"),
         }
@@ -134,8 +136,8 @@ struct IWDecoder {
 
 impl IWDecoder {
     fn new(width: usize, height: usize) -> Self {
-        let block_cols = (width + 31) / 32;
-        let block_rows = (height + 31) / 32;
+        let block_cols = width.div_ceil(32);
+        let block_rows = height.div_ceil(32);
         let block_count = block_cols * block_rows;
         IWDecoder {
             width,
@@ -192,8 +194,7 @@ impl IWDecoder {
         let (from, to) = BAND_BUCKETS[self.curband];
 
         if self.curband != 0 {
-            let mut boff = 0;
-            for j in from..=to {
+            for (boff, j) in (from..=to).enumerate() {
                 let mut bstatetmp: u8 = 0;
                 for k in 0..16 {
                     if self.blocks[block_idx][(j << 4) | k] == 0 {
@@ -205,7 +206,6 @@ impl IWDecoder {
                 }
                 self.bucketstate[boff] = bstatetmp;
                 self.bbstate |= bstatetmp;
-                boff += 1;
             }
         } else {
             let mut bstatetmp: u8 = 0;
@@ -227,22 +227,19 @@ impl IWDecoder {
     fn block_band_decoding_pass(&mut self, zp: &mut ZPDecoder) -> bool {
         let (from, to) = BAND_BUCKETS[self.curband];
         let bcount = to - from + 1;
-        if bcount < 16 || (self.bbstate & ACTIVE) != 0 {
+        let should_mark_new = bcount < 16
+            || (self.bbstate & ACTIVE) != 0
+            || ((self.bbstate & UNK) != 0 && zp.decode(&mut self.decode_bucket_ctx[0]));
+        if should_mark_new {
             self.bbstate |= NEW;
-        } else if (self.bbstate & UNK) != 0 {
-            if zp.decode(&mut self.decode_bucket_ctx[0]) {
-                self.bbstate |= NEW;
-            }
         }
         (self.bbstate & NEW) != 0
     }
 
     fn bucket_decoding_pass(&mut self, zp: &mut ZPDecoder, block_idx: usize) {
         let (from, to) = BAND_BUCKETS[self.curband];
-        let mut boff = 0;
-        for i in from..=to {
+        for (boff, i) in (from..=to).enumerate() {
             if (self.bucketstate[boff] & UNK) == 0 {
-                boff += 1;
                 continue;
             }
             let mut n: usize = 0;
@@ -263,15 +260,13 @@ impl IWDecoder {
             if zp.decode(&mut self.decode_coef_ctx[n + self.curband * 8]) {
                 self.bucketstate[boff] |= NEW;
             }
-            boff += 1;
         }
     }
 
     fn newly_active_coefficient_decoding_pass(&mut self, zp: &mut ZPDecoder, block_idx: usize) {
         let (from, to) = BAND_BUCKETS[self.curband];
-        let mut boff = 0;
         let mut step = self.quant_hi[self.curband];
-        for i in from..=to {
+        for (boff, i) in (from..=to).enumerate() {
             if (self.bucketstate[boff] & NEW) != 0 {
                 let shift: usize = if (self.bucketstate[boff] & ACTIVE) != 0 {
                     8
@@ -297,13 +292,10 @@ impl IWDecoder {
                             let val = sign * (s + (s >> 1) - (s >> 3));
                             self.blocks[block_idx][(i << 4) | j] = val as i16;
                         }
-                        if np > 0 {
-                            np -= 1;
-                        }
+                        np = np.saturating_sub(1);
                     }
                 }
             }
-            boff += 1;
         }
     }
 
@@ -313,9 +305,8 @@ impl IWDecoder {
         block_idx: usize,
     ) {
         let (from, to) = BAND_BUCKETS[self.curband];
-        let mut boff = 0;
         let mut step = self.quant_hi[self.curband];
-        for i in from..=to {
+        for (boff, i) in (from..=to).enumerate() {
             for j in 0..16 {
                 if (self.coeffstate[boff][j] & ACTIVE) != 0 {
                     if self.curband == 0 {
@@ -343,7 +334,6 @@ impl IWDecoder {
                     };
                 }
             }
-            boff += 1;
         }
     }
 
@@ -361,9 +351,9 @@ impl IWDecoder {
     }
 
     fn get_bytemap(&self, subsample: usize) -> Bytemap {
-        let full_width = ((self.width + 31) / 32) * 32;
-        let full_height = ((self.height + 31) / 32) * 32;
-        let block_rows = (self.height + 31) / 32;
+        let full_width = self.width.div_ceil(32) * 32;
+        let full_height = self.height.div_ceil(32) * 32;
+        let block_rows = self.height.div_ceil(32);
         let mut bm = Bytemap {
             data: vec![0i16; full_width * full_height],
             stride: full_width,
@@ -428,19 +418,25 @@ fn inverse_wavelet_transform(bm: &mut Bytemap, width: usize, height: usize, subs
         // === Column pass (transposed: iterate rows then columns for cache efficiency) ===
         {
             let kmax = (height - 1) >> sd;
-            let border = if kmax >= 3 { kmax - 3 } else { 0 };
-            let num_cols = (width + s - 1) / s;
+            let border = kmax.saturating_sub(3);
+            let num_cols = width.div_ceil(s);
 
             // --- Lifting (even samples) ---
-            for v in &mut st0[..num_cols] { *v = 0; }
-            for v in &mut st1[..num_cols] { *v = 0; }
+            for v in &mut st0[..num_cols] {
+                *v = 0;
+            }
+            for v in &mut st1[..num_cols] {
+                *v = 0;
+            }
             if kmax >= 1 {
                 let off = (1 << sd) * stride;
                 for (ci, col) in (0..width).step_by(s).enumerate() {
                     st2[ci] = data[off + col] as i32;
                 }
             } else {
-                for v in &mut st2[..num_cols] { *v = 0; }
+                for v in &mut st2[..num_cols] {
+                    *v = 0;
+                }
             }
 
             let mut k = 0usize;
@@ -514,7 +510,8 @@ fn inverse_wavelet_transform(bm: &mut Bytemap, width: usize, height: usize, subs
 
                         let a = p1 + n1;
                         let idx = k_off + col;
-                        data[idx] = (data[idx] as i32 + (((a << 3) + a - (p3 + n3) + 8) >> 4)) as i16;
+                        data[idx] =
+                            (data[idx] as i32 + (((a << 3) + a - (p3 + n3) + 8) >> 4)) as i16;
 
                         st0[ci] = p1;
                         st1[ci] = n1;
@@ -527,7 +524,7 @@ fn inverse_wavelet_transform(bm: &mut Bytemap, width: usize, height: usize, subs
                 while k <= kmax {
                     let k_off = (k << sd) * stride;
 
-                    if k + 1 <= kmax {
+                    if k < kmax {
                         for (ci, col) in (0..width).step_by(s).enumerate() {
                             let p = st1[ci];
                             let n = st2[ci];
@@ -553,7 +550,7 @@ fn inverse_wavelet_transform(bm: &mut Bytemap, width: usize, height: usize, subs
         // === Row pass (already cache-friendly, work directly on data slice) ===
         {
             let kmax = (width - 1) >> sd;
-            let border = if kmax >= 3 { kmax - 3 } else { 0 };
+            let border = kmax.saturating_sub(3);
 
             for row in (0..height).step_by(s) {
                 let off = row * stride;
@@ -588,7 +585,7 @@ fn inverse_wavelet_transform(bm: &mut Bytemap, width: usize, height: usize, subs
                 if kmax >= 1 {
                     let mut k = 1usize;
                     prev1 = data[off + ((k - 1) << sd)] as i32;
-                    if k + 1 <= kmax {
+                    if k < kmax {
                         next1 = data[off + ((k + 1) << sd)] as i32;
                         let idx = off + (k << sd);
                         data[idx] = (data[idx] as i32 + ((prev1 + next1 + 1) >> 1)) as i16;
@@ -611,7 +608,8 @@ fn inverse_wavelet_transform(bm: &mut Bytemap, width: usize, height: usize, subs
                         next3 = data[off + ((k + 3) << sd)] as i32;
                         let a = prev1 + next1;
                         let idx = off + (k << sd);
-                        data[idx] = (data[idx] as i32 + (((a << 3) + a - (prev3 + next3) + 8) >> 4)) as i16;
+                        data[idx] =
+                            (data[idx] as i32 + (((a << 3) + a - (prev3 + next3) + 8) >> 4)) as i16;
                         k += 2;
                     }
 
@@ -619,7 +617,7 @@ fn inverse_wavelet_transform(bm: &mut Bytemap, width: usize, height: usize, subs
                         prev1 = next1;
                         next1 = next3;
                         next3 = 0;
-                        if k + 1 <= kmax {
+                        if k < kmax {
                             let idx = off + (k << sd);
                             data[idx] = (data[idx] as i32 + ((prev1 + next1 + 1) >> 1)) as i16;
                         } else {
@@ -633,9 +631,7 @@ fn inverse_wavelet_transform(bm: &mut Bytemap, width: usize, height: usize, subs
         }
 
         s >>= 1;
-        if s_degree > 0 {
-            s_degree -= 1;
-        }
+        s_degree = s_degree.saturating_sub(1);
     }
 }
 
@@ -652,6 +648,13 @@ pub struct IW44Image {
     cslice: usize,
 }
 
+impl Default for IW44Image {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+#[cfg(test)]
 pub struct NormalizedPlanes {
     pub width: u32,
     pub height: u32,
@@ -679,6 +682,7 @@ impl IW44Image {
         self.width
     }
 
+    #[cfg(test)]
     pub fn height(&self) -> u16 {
         self.height
     }
@@ -764,13 +768,10 @@ impl IW44Image {
         if subsample == 0 {
             return Err(DecodeError::InvalidSubsample);
         }
-        let y_codec = self
-            .y_codec
-            .as_ref()
-            .ok_or(DecodeError::MissingCodec)?;
+        let y_codec = self.y_codec.as_ref().ok_or(DecodeError::MissingCodec)?;
         let sub = subsample as usize;
-        let w = ((self.width as usize + sub - 1) / sub) as u32;
-        let h = ((self.height as usize + sub - 1) / sub) as u32;
+        let w = (self.width as usize).div_ceil(sub) as u32;
+        let h = (self.height as usize).div_ceil(sub) as u32;
 
         let y_bm = y_codec.get_bytemap(sub);
 
@@ -835,6 +836,7 @@ impl IW44Image {
         }
     }
 
+    #[cfg(test)]
     pub fn to_normalized_planes_subsample(
         &self,
         subsample: u32,
@@ -842,13 +844,10 @@ impl IW44Image {
         if subsample == 0 {
             return Err(DecodeError::InvalidSubsample);
         }
-        let y_codec = self
-            .y_codec
-            .as_ref()
-            .ok_or(DecodeError::MissingCodec)?;
+        let y_codec = self.y_codec.as_ref().ok_or(DecodeError::MissingCodec)?;
         let sub = subsample as usize;
-        let w = ((self.width as usize + sub - 1) / sub) as u32;
-        let h = ((self.height as usize + sub - 1) / sub) as u32;
+        let w = (self.width as usize).div_ceil(sub) as u32;
+        let h = (self.height as usize).div_ceil(sub) as u32;
         let y_bm = y_codec.get_bytemap(sub);
 
         let mut y = vec![0i16; (w * h) as usize];
@@ -918,6 +917,12 @@ impl IW44Image {
 
 #[cfg(test)]
 mod tests {
+    #![allow(
+        clippy::implicit_saturating_sub,
+        clippy::int_plus_one,
+        clippy::manual_div_ceil
+    )]
+
     use super::*;
 
     fn assets_path() -> std::path::PathBuf {
@@ -926,8 +931,7 @@ mod tests {
     }
 
     fn golden_path() -> std::path::PathBuf {
-        std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("tests/golden/iw44")
+        std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/golden/iw44")
     }
 
     fn extract_bg44_chunks<'a>(file: &'a crate::iff::DjvuFile<'a>) -> Vec<&'a [u8]> {
@@ -942,7 +946,10 @@ mod tests {
                         let v = children
                             .iter()
                             .filter_map(|c| match c {
-                                crate::iff::Chunk::Leaf { id, data } if id == b"BG44" => Some(*data),
+                                crate::iff::Chunk::Leaf {
+                                    id: [b'B', b'G', b'4', b'4'],
+                                    data,
+                                } => Some(*data),
                                 _ => None,
                             })
                             .collect::<Vec<_>>();
@@ -2241,10 +2248,12 @@ mod tests {
         // No chunks decoded yet — should produce an empty or minimal image
         let img = IW44Image::new();
         let result = img.to_pixmap();
-        assert!(result.is_err() || {
-            let pm = result.unwrap();
-            pm.width == 0 || pm.height == 0
-        });
+        assert!(
+            result.is_err() || {
+                let pm = result.unwrap();
+                pm.width == 0 || pm.height == 0
+            }
+        );
     }
 
     #[test]
@@ -2257,8 +2266,9 @@ mod tests {
     fn iw44_fuzz_crash_regression() {
         let data = std::fs::read(
             std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-                .join("fuzz/artifacts/fuzz_iw44/crash-cd05b0f41ddae1e44952cccf5e2b2ae825908e5e")
-        ).unwrap();
+                .join("fuzz/artifacts/fuzz_iw44/crash-cd05b0f41ddae1e44952cccf5e2b2ae825908e5e"),
+        )
+        .unwrap();
         let mut img = IW44Image::new();
         if img.decode_chunk(&data).is_ok() {
             let _ = img.to_pixmap();

@@ -1,18 +1,12 @@
 /// An RGBA pixel image, 4 bytes per pixel.
 ///
 /// Row-major, top-to-bottom. Alpha is always 255 for DjVu pages.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Pixmap {
     pub width: u32,
     pub height: u32,
     /// RGBA pixel data, row-major. Length = width * height * 4.
     pub data: Vec<u8>,
-}
-
-impl Default for Pixmap {
-    fn default() -> Self {
-        Pixmap { width: 0, height: 0, data: Vec::new() }
-    }
 }
 
 impl AsRef<[u8]> for Pixmap {
@@ -42,7 +36,11 @@ impl Pixmap {
             data.push(b);
             data.push(a);
         }
-        Pixmap { width, height, data }
+        Pixmap {
+            width,
+            height,
+            data,
+        }
     }
 
     /// Create a white opaque pixmap.
@@ -90,7 +88,7 @@ impl Pixmap {
         out.extend_from_slice(header.as_bytes());
         for i in 0..pixel_count {
             let base = i * 4;
-            out.push(self.data[base]);     // R
+            out.push(self.data[base]); // R
             out.push(self.data[base + 1]); // G
             out.push(self.data[base + 2]); // B
         }
@@ -122,8 +120,8 @@ mod tests {
     #[test]
     fn to_ppm_format() {
         let mut pm = Pixmap::white(2, 1);
-        pm.set_rgb(0, 0, 255, 0, 0);   // red
-        pm.set_rgb(1, 0, 0, 0, 255);   // blue
+        pm.set_rgb(0, 0, 255, 0, 0); // red
+        pm.set_rgb(1, 0, 0, 0, 255); // blue
         let ppm = pm.to_ppm();
         let header = b"P6\n2 1\n255\n";
         assert_eq!(&ppm[..header.len()], header);
